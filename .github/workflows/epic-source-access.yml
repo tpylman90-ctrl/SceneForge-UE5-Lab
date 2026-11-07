@@ -17,37 +17,41 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Check existing Epic-linked token for UE source access
+      - name: Check fine-grained source token, then temporary classic fallback
         shell: bash
         env:
           EPIC_SOURCE_TOKEN: ${{ secrets.EPIC_SOURCE_TOKEN }}
+          EPIC_SOURCE_CLASSIC_TOKEN: ${{ secrets.EPIC_SOURCE_CLASSIC_TOKEN }}
         run: |
           set -euo pipefail
-          # Require the dedicated least-privilege token: no package-token fallback.
-          if [ -z "${EPIC_SOURCE_TOKEN:-}" ]; then
-            echo "::error::EPIC_SOURCE_TOKEN is missing from repository Actions secrets."
-            printf '%s\n' '### Epic source access: missing dedicated token' >> "$GITHUB_STEP_SUMMARY"
-            exit 3
+          # Only GitHub's HTTP status is observed. No token, response body, or private source is logged.
+          check_token() {
+            local token="$1"
+            curl --silent --show-error --retry 1 --connect-timeout 15 --max-time 30 \
+              --output /dev/null --write-out '%{http_code}' \
+              --header "Authorization: Bearer $token" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              https://api.github.com/repos/EpicGames/UnrealEngine
+          }
+          fine_code=not-configured
+          classic_code=not-configured
+          if [ -n "${EPIC_SOURCE_TOKEN:-}" ]; then
+            fine_code=$(check_token "$EPIC_SOURCE_TOKEN")
           fi
-          # Only HTTP status: neither token nor response contents are displayed.
-          http_code=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-            --header "Authorization: Bearer $EPIC_SOURCE_TOKEN" \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/EpicGames/UnrealEngine)
-          case "$http_code" in
-            200)
-              echo "Dedicated Epic source token can read the UnrealEngine repository."
-              printf '%s\n' '### Epic source access: verified HTTP 200' 'Source checkout access verified. Android engine compilation remains untested.' >> "$GITHUB_STEP_SUMMARY"
-              ;;
-            401|403|404)
-              echo "Configured token cannot read Epic's private UnrealEngine source repository (HTTP $http_code)."
-              printf '%s\n' "### Epic source access: HTTP $http_code" 'Not authorized; workflow is intentionally red until access is verified.' >> "$GITHUB_STEP_SUMMARY"
-              exit 4
-              ;;
-            *)
-              echo "Epic source repository API returned HTTP $http_code; indeterminate."
-              printf '%s\n' "### Epic source access: HTTP $http_code" 'Indeterminate; source access is not confirmed.' >> "$GITHUB_STEP_SUMMARY"
-              exit 5
-              ;;
-          esac
+          if [ "$fine_code" = 200 ]; then
+            echo 'Epic source authorization confirmed using fine-grained token.'
+            printf '%s\n' '### Epic source access: HTTP 200 (fine-grained)' 'Read-only source access confirmed; engine compilation not yet tested.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -n "${EPIC_SOURCE_CLASSIC_TOKEN:-}" ]; then
+            classic_code=$(check_token "$EPIC_SOURCE_CLASSIC_TOKEN")
+          fi
+          if [ "$classic_code" = 200 ]; then
+            echo 'Epic source authorization confirmed using temporary classic token; fine-grained access not yet available.'
+            printf '%s\n' '### Epic source access: HTTP 200 (temporary classic)' 'Revoke classic token once fine-grained source access is approved. Engine compilation not yet tested.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "::error::Neither source token can read EpicGames/UnrealEngine (fine-grained: $fine_code; classic: $classic_code)."
+          printf '%s\n' '### Epic source access: unauthorized' "Fine-grained: $fine_code; classic: $classic_code. No engine content accessed." >> "$GITHUB_STEP_SUMMARY"
+          exit 4
