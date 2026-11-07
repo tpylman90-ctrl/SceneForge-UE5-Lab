@@ -192,7 +192,45 @@ jobs:
             $buildCode = if ($buildStop -ne 'none') { 98 } else { $build.ExitCode }
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Android BuildGraph exit code: $buildCode; stop reason: $buildStop; remaining GiB: $(FreeGiB)"
             Write-Output "BuildGraph exit code: $buildCode; stop reason: $buildStop; free disk GiB: $(FreeGiB)."
-            if ($buildCode -ne 0) { throw 'Bounded Android-enabled Unreal BuildGraph failed. No engine artifacts were uploaded.' }
+            # Only emit allowlisted error categories. Never reveal arbitrary
+            # Engine logs, source fragments, filesystem paths, or file contents.
+            $buildLogPaths = @($buildOut,$buildErr) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+            if ($buildLogPaths.Count -gt 0) {
+              $privateLog = ($buildLogPaths | ForEach-Object { [System.IO.File]::ReadAllText($_) }) -join [Environment]::NewLine
+              $diagnosticPatterns = [ordered]@{
+                'Unknown BuildGraph target or option' = '(?im)(unknown target|target .* not found|unknown option|option .* not found|invalid argument|Unrecognized argument)'
+                'AutomationTool or UBT compilation error' = '(?im)(AutomationTool.*(failed|error)|UnrealBuildTool.*(failed|error)|error CS[0-9]{4}|error MSB[0-9]{4}|error NU[0-9]{4})'
+                'Dotnet runtime or SDK missing' = '(?im)(dotnet.*not found|\.NET SDK.*not found|No .NET SDKs were found|dotnet.*error)'
+                'Visual Studio or MSVC toolchain unavailable' = '(?im)(Visual Studio.*not found|Visual Studio.*missing|MSVC.*not found|MSVC.*missing|No supported.*compiler|Unable to find valid.*compiler|vcvars.*not found)'
+                'Windows SDK unavailable' = '(?im)(Windows SDK.*not found|Windows SDK.*missing|Windows SDK.*is required)'
+                'Android SDK or NDK unavailable' = '(?im)(Android SDK.*(not found|missing|invalid)|Android NDK.*(not found|missing|invalid)|NDKROOT.*(not found|missing|invalid))'
+                'Memory exhaustion' = '(?im)(out of memory|not enough memory|fatal error C1060|fatal error C1076|System.OutOfMemoryException)'
+                'Disk exhaustion' = '(?im)(no space left on device|not enough space on the disk|disk full)'
+                'Engine C++ compiler failure' = '(?im)(fatal error C[0-9]{4}|error C[0-9]{4}|error:.*failed to compile)'
+                'Access denied or missing file' = '(?im)(Access is denied|UnauthorizedAccessException|FileNotFoundException|The system cannot find the file specified)'
+                'BuildGraph node failure' = '(?im)(BUILD FAILED|BUILD FAILED:|BuildGraph.*failed|Failed to execute build graph|Node .* failed)'
+              }
+              $matched = @()
+              foreach ($category in $diagnosticPatterns.Keys) {
+                if ([regex]::IsMatch($privateLog,$diagnosticPatterns[$category])) { $matched += $category }
+              }
+              if ($matched.Count -eq 0) { $matched = @('Unclassified BuildGraph failure — needs targeted diagnostics') }
+              Write-Output "BuildGraph diagnostic categories (safe, nonproprietary): $($matched -join ', ')."
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- BuildGraph error categories: $($matched -join ', ')"
+              $errorLines = ([regex]::Matches($privateLog,'(?im)^.{0,500}(ERROR:|error CS[0-9]{4}|error MSB[0-9]{4}|Exception:).{0,500}            Write-Output 'Android-enabled installed-engine BuildGraph returned success. No engine artifacts uploaded.'
+          }
+          finally {
+            Remove-Item Env:UE_GIT_SOURCE_TOKEN -ErrorAction SilentlyContinue
+            $cleanupFiles = @($askpass,$out,$err,$buildOut,$buildErr) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+            if ($cleanupFiles.Count -gt 0) { Remove-Item -LiteralPath $cleanupFiles -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $folder) { Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue }
+          }
+)).Count
+              Write-Output "BuildGraph error-marker line count: $errorLines."
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- BuildGraph error-marker line count: $errorLines"
+              Remove-Variable privateLog -ErrorAction SilentlyContinue
+            }
+            if ($buildCode -ne 0) { throw 'Bounded Android-enabled Unreal BuildGraph failed. Diagnostic categories provided above; no engine files uploaded.' }
             Write-Output 'Android-enabled installed-engine BuildGraph returned success. No engine artifacts uploaded.'
           }
           finally {
