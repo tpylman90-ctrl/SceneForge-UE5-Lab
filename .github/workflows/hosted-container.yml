@@ -1,8 +1,14 @@
-name: Official Epic container feasibility (manual)
+name: Official Epic container feasibility
 
 # Official Epic development image is license/credential gated. NEVER log tokens
 # or upload the proprietary engine as an artifact.
 on:
+  # Initial manifest smoke check is triggered only when this workflow file changes.
+  # Restricted to owner-controlled main; no untrusted pull_request jobs use the PAT.
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/hosted-container.yml
   workflow_dispatch:
     inputs:
       stage:
