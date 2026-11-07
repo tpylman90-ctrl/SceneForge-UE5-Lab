@@ -46,17 +46,27 @@ jobs:
             $tokenType = 'temporary-classic'
           }
           else { throw 'No token authorized for Epic private Unreal source.' }
-          $root = (Get-PSDrive C).Root
-          function FreeGiB() { [math]::Round((Get-PSDrive C).Free / 1GB, 2) }
+          # The GitHub runner's temp/workspace is commonly on D:, while C:
+          # only has ~31 GiB. Check the ACTUAL source-checkout volume.
+          $checkoutDrive = ([System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)).TrimEnd('\\').TrimEnd(':')
+          function FreeGiB() {
+            [math]::Round((Get-PSDrive -Name $checkoutDrive).Free / 1GB, 2)
+          }
           $before = FreeGiB
-          if ($before -lt 105) { throw "Insufficient disk headroom for safe Windows dependency test: $before GiB." }
+          Write-Output "Runner temp drive: $checkoutDrive; free: $before GiB."
+          if ($before -lt 105) { throw "Insufficient disk headroom on checkout drive for safe Windows dependency test: $before GiB." }
           $folder = Join-Path $env:RUNNER_TEMP 'ue58-windows-dependencies'
           $askpass = Join-Path $env:RUNNER_TEMP 'ue58-askpass.cmd'
           $out = Join-Path $env:RUNNER_TEMP 'ue58-setup-private-stdout.log'
           $err = Join-Path $env:RUNNER_TEMP 'ue58-setup-private-stderr.log'
           @'
           @echo off
-          echo %UE_GIT_SOURCE_TOKEN%
+          echo %~1 | findstr /I "Username" >nul
+          if not errorlevel 1 (
+            echo x-access-token
+          ) else (
+            echo %UE_GIT_SOURCE_TOKEN%
+          )
           '@ | Set-Content -Path $askpass -Encoding ascii
           $env:GIT_ASKPASS = $askpass
           $env:GIT_TERMINAL_PROMPT = '0'
