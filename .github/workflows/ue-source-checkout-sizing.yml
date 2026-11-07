@@ -1,0 +1,93 @@
+name: UE5 Android source checkout sizing
+
+# Private Epic source stays on an ephemeral authorized runner; never upload it.
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/ue-source-checkout-sizing.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-sizing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Measure licensed Unreal 5.8 shallow checkout on free runner
+        shell: bash
+        env:
+          EPIC_SOURCE_TOKEN: ${{ secrets.EPIC_SOURCE_TOKEN }}
+          EPIC_SOURCE_CLASSIC_TOKEN: ${{ secrets.EPIC_SOURCE_CLASSIC_TOKEN }}
+        run: |
+          set -euo pipefail
+          probe() {
+            curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --header "Authorization: Bearer $1" \
+              --header 'Accept: application/vnd.github+json' \
+              https://api.github.com/repos/EpicGames/UnrealEngine
+          }
+          token=""
+          source_type=""
+          if [ -n "$EPIC_SOURCE_TOKEN" ] && [ "$(probe "$EPIC_SOURCE_TOKEN")" = 200 ]; then
+            token="$EPIC_SOURCE_TOKEN"
+            source_type="fine-grained"
+          elif [ -n "$EPIC_SOURCE_CLASSIC_TOKEN" ] && [ "$(probe "$EPIC_SOURCE_CLASSIC_TOKEN")" = 200 ]; then
+            token="$EPIC_SOURCE_CLASSIC_TOKEN"
+            source_type="temporary-classic"
+          else
+            echo "::error::No authorized Epic source token found."
+            exit 2
+          fi
+          available_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+          if [ "$available_kb" -lt 62914560 ]; then
+            echo "::error::Less than 60 GiB free disk at start; avoid source checkout."
+            exit 3
+          fi
+          export UE_SOURCE_GIT_TOKEN="$token"
+          unset token
+          tmp_dir="$RUNNER_TEMP/ue5-source-checkout"
+          askpass="$RUNNER_TEMP/sceneforge-ue5-askpass.sh"
+          mkdir -p "$tmp_dir"
+          cleanup() {
+            rm -f "$askpass"
+            unset UE_SOURCE_GIT_TOKEN
+            rm -rf "$tmp_dir"
+          }
+          trap cleanup EXIT
+          cat > "$askpass" <<'ASKPASS'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s' 'x-access-token' ;;
+            *Password*) printf '%s' "$UE_SOURCE_GIT_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          ASKPASS
+          chmod 700 "$askpass"
+          export GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0
+          start_time=$(date +%s)
+          echo "Checking out UE 5.8 source; binary dependencies and compilation excluded."
+          timeout 900 git -c credential.helper= clone \
+            --quiet --depth=1 --filter=blob:none \
+            --single-branch --branch=5.8 \
+            https://github.com/EpicGames/UnrealEngine.git \
+            "$tmp_dir/UnrealEngine"
+          elapsed=$(( $(date +%s) - start_time ))
+          test -f "$tmp_dir/UnrealEngine/Engine/Build/InstalledEngineBuild.xml"
+          test -f "$tmp_dir/UnrealEngine/Setup.sh"
+          test -f "$tmp_dir/UnrealEngine/Engine/Build/BatchFiles/RunUAT.sh"
+          bytes=$(du -sb "$tmp_dir/UnrealEngine" | awk '{print $1}')
+          free_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+          {
+            echo "### Unreal Engine 5.8 authorized source checkout sizing"
+            echo "- Credential: $source_type"
+            echo "- Checkout: completed"
+            echo "- Checkout seconds: $elapsed"
+            echo "- Checkout bytes including Git metadata: $bytes"
+            echo "- Runner disk free after checkout (KiB): $free_kb"
+            echo "- UE binary dependencies: NOT downloaded"
+            echo "- Unreal Engine compilation: NOT attempted"
+            echo "- Android APK: NOT produced"
+            echo "- Epic source uploaded or cached: NO"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
