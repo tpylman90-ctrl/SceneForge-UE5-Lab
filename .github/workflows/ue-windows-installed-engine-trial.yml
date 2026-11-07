@@ -11,11 +11,33 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: sceneforge-ue58-windows-android-build
+  cancel-in-progress: false
+
 jobs:
   windows-deps:
     runs-on: windows-2025
     timeout-minutes: 350
     steps:
+      - name: Set up Java 21 for Unreal Android
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Android SDK CLI
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Pin Android SDK 35, build-tools 35.0.1 and NDK r27c
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          sdkmanager --install 'platforms;android-35' 'build-tools;35.0.1' 'ndk;27.2.12479018'
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to install pinned Android SDK/NDK tools.' }
+          if (-not (Test-Path (Join-Path $env:ANDROID_HOME 'ndk/27.2.12479018'))) { throw 'Android NDK r27c is unavailable.' }
+          "NDKROOT=$(Join-Path $env:ANDROID_HOME 'ndk/27.2.12479018')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ANDROID_SDK_ROOT=$env:ANDROID_HOME" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Bounded UE5.8 Android-enabled installed engine BuildGraph trial
         shell: pwsh
         env:
@@ -81,10 +103,24 @@ jobs:
             if (-not (Test-Path (Join-Path $folder 'Setup.bat'))) { throw 'Unreal Setup.bat missing after authorized checkout.' }
             $checkoutFree = FreeGiB
             if ($checkoutFree -lt 90) { throw "Insufficient free space after clone: $checkoutFree GiB." }
+            # UE5.8 Setup.bat can display an interactive UnrealVersionSelector file-type
+            # registration prompt on headless runners. Apply Epic's forum-recommended
+            # /register /unattended adjustment ONLY to ephemeral licensed checkout.
+            $setupBat = Join-Path $folder 'Setup.bat'
+            $setupText = [System.IO.File]::ReadAllText($setupBat)
+            $selectorPattern = '(?i)(UnrealVersionSelector-Win64-Shipping\.exe\s+/register)(?!\s+/unattended)'
+            if ([regex]::IsMatch($setupText, $selectorPattern)) {
+              $patchedSetup = [regex]::Replace($setupText, $selectorPattern, '$1 /unattended')
+              [System.IO.File]::WriteAllText($setupBat, $patchedSetup)
+              Write-Output 'Made local UnrealVersionSelector registration unattended; no Epic script content published.'
+            }
+            else {
+              Write-Output 'No interactive UnrealVersionSelector registration match found in this source checkout.'
+            }
             Write-Output 'Running bounded Unreal Setup.bat for Windows + Android. Other platforms excluded.'
             # Preserve Android support. Avoid downloading other host/console platforms.
             $excludes = '-exclude=Mac -exclude=MacOS -exclude=IOS -exclude=TVOS -exclude=Linux -exclude=LinuxArm64 -exclude=Win32'
-            $command = "Setup.bat $excludes"
+            $command = "Setup.bat --force $excludes"
             $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/s', '/c', $command -WorkingDirectory $folder -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden
             $stopped = 'no'
             $stopReason = ''
@@ -161,6 +197,7 @@ jobs:
           }
           finally {
             Remove-Item Env:UE_GIT_SOURCE_TOKEN -ErrorAction SilentlyContinue
-            Remove-Item $askpass,$out,$err,$buildOut,$buildErr -ErrorAction SilentlyContinue
+            $cleanupFiles = @($askpass,$out,$err,$buildOut,$buildErr) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+            if ($cleanupFiles.Count -gt 0) { Remove-Item -LiteralPath $cleanupFiles -Force -ErrorAction SilentlyContinue }
             if (Test-Path $folder) { Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue }
           }
