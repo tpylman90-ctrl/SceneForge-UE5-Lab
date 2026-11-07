@@ -87,16 +87,24 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Install Android SDK command-line tools
+        if: ${{ inputs.stage == 'android' || github.event_name == 'push' }}
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: false
       - name: Install pinned Android toolchain on host
         if: ${{ inputs.stage == 'android' || github.event_name == 'push' }}
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
+          command -v sdkmanager
+          test -n "${ANDROID_HOME:-}"
           sdkmanager --install 'platforms;android-35' 'build-tools;35.0.1' 'ndk;27.2.12479018'
           test -d "$ANDROID_HOME/ndk/27.2.12479018"
           test -d "$ANDROID_HOME/platforms/android-35"
           test -d "$ANDROID_HOME/build-tools/35.0.1"
+          grep -E '^Pkg.Revision[[:space:]]*=[[:space:]]*27\.2\.12479018' "$ANDROID_HOME/ndk/27.2.12479018/source.properties"
           java -version
           df -h / | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Check free space before Unreal packaging
