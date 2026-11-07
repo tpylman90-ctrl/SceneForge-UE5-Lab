@@ -30,3 +30,13 @@ The [official development container overview](https://dev.epicgames.com/document
 - GitHub app permissions and a GitHub PAT are separate; a token with package access may lack private source-repository permission.
 - Public GitHub Actions runs are free, but they are not persistent. Do not upload proprietary engine files, credentials or private Unreal code as artifacts.
 - Keep the production Godot SceneForge repo untouched. Do not claim an APK until the packaging artifact exists.
+
+## Verified source entitlement check — November 6–7, 2026
+
+[Source access probe](https://github.com/tpylman90-ctrl/SceneForge-UE5-Lab/actions/runs/42329959235) completed successfully as an HTTP-status diagnostic, but access to `EpicGames/UnrealEngine` returned **404** using our existing `EPIC_GHCR_TOKEN`. This token's successful package-registry access does **not** imply private-repository access.
+
+The probe now prefers a **separate** secret named `EPIC_SOURCE_TOKEN` when available and falls back to `EPIC_GHCR_TOKEN` for diagnostics. Source access remains the next authorization gate.
+
+To enable further work, verify that your signed-in GitHub account can visit `https://github.com/EpicGames/UnrealEngine`. If it can, create a GitHub personal access token that can **read that repository's contents**, ideally scoped specifically to that repository if GitHub/Epic permits. Some configurations may require a classic PAT's broad `repo` scope, which can access other private repos: understand that risk and use a short expiry. Store the token **only** as the Actions repository secret `EPIC_SOURCE_TOKEN`; never paste it into an issue, log, chat, or project code. The source-access check does not clone, download, or publish Epic code. No token alone guarantees compilation within free runner limits.
+
+Do **not** replace the existing working `EPIC_GHCR_TOKEN`: it continues to authorize Epic's container downloads.
