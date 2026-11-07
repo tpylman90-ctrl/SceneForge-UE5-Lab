@@ -25,6 +25,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Install compatible .NET SDKs for Unreal build tools
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            6.0.x
+            8.0.x
+            9.0.x
       - name: Set up Android SDK CLI
         uses: android-actions/setup-android@v3
         with:
@@ -167,6 +174,16 @@ jobs:
             if ($rc -ne 0) { throw 'Dependency setup incomplete; compile not attempted.' }
             if ((FreeGiB) -lt 45) { throw 'Insufficient post-Setup disk headroom for compilation.' }
             Write-Output 'Dependencies completed. Starting Android-enabled Unreal installed-engine BuildGraph.'
+            Write-Output 'Installed .NET SDK major versions:'
+            $sdkVersions = & dotnet --list-sdks 2>$null | ForEach-Object {
+              if ($_ -match '^(\d+)\.(\d+)\.') { "$($Matches[1]).$($Matches[2])" }
+            } | Select-Object -Unique
+            if ($sdkVersions) { Write-Output ($sdkVersions -join ', ') }
+            $vswhere = Join-Path "${env:ProgramFiles(x86)}" 'Microsoft Visual Studio/Installer/vswhere.exe'
+            if (Test-Path $vswhere) {
+              $vsInfos = & $vswhere -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
+              Write-Output "MSVC-capable Visual Studio versions: $($vsInfos -join ', ')"
+            }
             $config = Join-Path $folder 'Engine/Saved/UnrealBuildTool/BuildConfiguration.xml'
             New-Item -ItemType Directory -Force -Path (Split-Path $config) | Out-Null
             $xml = '<Configuration xmlns="https://www.unrealengine.com/BuildConfiguration"><BuildConfiguration><MaxParallelActions>2</MaxParallelActions></BuildConfiguration><ParallelExecutor><MemoryPerActionBytes>4294967296</MemoryPerActionBytes></ParallelExecutor></Configuration>'
@@ -217,6 +234,25 @@ jobs:
               if ($matched.Count -eq 0) { $matched = @('Unclassified BuildGraph failure — needs targeted diagnostics') }
               Write-Output "BuildGraph diagnostic categories (safe, nonproprietary): $($matched -join ', ')."
               Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- BuildGraph error categories: $($matched -join ', ')"
+              $codes = [regex]::Matches($privateLog, '(?i)\b(CS\d{4}|MSB\d{4}|NETSDK\d{4}|NU\d{4}|C\d{4}|LNK\d{4})\b') |
+                ForEach-Object { $_.Value.ToUpperInvariant() } | Select-Object -Unique
+              $codesList = if ($codes) { $codes -join ', ' } else { 'none visible' }
+              Write-Output "Sanitized compiler diagnostic codes: $codesList"
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Compiler diagnostic codes: $codesList"
+              $targeted = [ordered]@{
+                'Requires newer dotnet SDK' = '(?i)(NETSDK1045|NETSDK1047|The current .NET SDK does not support targeting|requires a higher version of .NET)'
+                'Missing dotnet target packs' = '(?i)(NETSDK1127|NETSDK1112|NETSDK1005|Unable to find package Microsoft.NETCore.App.Ref)'
+                'CSharp symbols missing' = '(?i)(CS0246|CS0234|CS0103|CS0117|CS1061)'
+                'NuGet package restoration failed' = '(?i)(NU1101|NU1102|NU1301|Failed to restore|Unable to load the service index)'
+                'Invalid BuildGraph arguments' = '(?i)(Unrecognized argument|Unrecognized option|Unknown option|Unknown target|No target with name)'
+                'Visual Studio components' = '(?i)(MSB8020|MSB8036|MSB8041|MSB8044|MSB8066|MSB3073)'
+              }
+              foreach ($key in $targeted.Keys) {
+                if ([regex]::IsMatch($privateLog, $targeted[$key])) {
+                  Write-Output "Targeted diagnostic: $key"
+                  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Targeted diagnostic: $key"
+                }
+              }
               $errorLines = ([regex]::Matches($privateLog, 'ERROR:|error CS[0-9]{4}|error MSB[0-9]{4}|Exception:', 'IgnoreCase')).Count
               Write-Output "BuildGraph error-marker line count: $errorLines."
               Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- BuildGraph error-marker line count: $errorLines"
