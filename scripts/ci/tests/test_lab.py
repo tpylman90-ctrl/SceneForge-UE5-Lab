@@ -32,6 +32,15 @@ class LabContractTests(unittest.TestCase):
                      ".github/workflows/android-package.yml"):
             self.assertTrue((ROOT / path).is_file(), path)
 
+    def test_container_packaging_uses_epic_default_user(self):
+        # The official engine directory is inaccessible to the GitHub runner
+        # identity when forced into the container with docker --user.
+        workflow = (ROOT / ".github/workflows/hosted-container.yml").read_text()
+        self.assertIn('image_uid=$(docker run --rm --entrypoint /usr/bin/id', workflow)
+        self.assertIn('sudo chown -R "$image_uid:$image_gid" "$GITHUB_WORKSPACE"', workflow)
+        self.assertNotIn('--user "$(id -u):$(id -g)"', workflow)
+        self.assertIn('Restore host ownership for artifact uploader', workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
