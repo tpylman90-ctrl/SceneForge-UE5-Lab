@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     env:
-      UE_IMAGE: ghcr.io/epicgames/unreal-engine:dev-slim-5.8.0@sha256:daac02628ea880513e18ccd1364b1cac949d40609b24c040d73872d8214a0c46
+      UE_IMAGE: ghcr.io/epicgames/unreal-engine:dev-slim-5.8.0
       GHCR_USER: ${{ github.repository_owner }}
       UE_IMAGE_TAG: ghcr.io/epicgames/unreal-engine:dev-slim-5.8.0
     steps:
@@ -59,8 +59,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The Docker manifest CLI is more reliable with the plain tag than tag@digest.
-          # Keep the immutable digest for the later pull/build stages.
+          # Official Epic tag verified by authenticated manifest. Record digest on pull.
           if ! docker manifest inspect "$UE_IMAGE_TAG" >/dev/null; then
             echo "::error::Epic image access denied. Confirm the EpicGames GitHub invitation was accepted and the token belongs to the Epic-linked account."
             exit 3
@@ -68,11 +67,13 @@ jobs:
           echo "Official pinned image manifest was accessible." >> "$GITHUB_STEP_SUMMARY"
           df -h / | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pull official UE installed-build container
-        if: ${{ inputs.stage == 'pull' || inputs.stage == 'android' }}
+        if: ${{ inputs.stage == 'pull' || inputs.stage == 'android' || github.event_name == 'push' }}
         shell: bash
         run: |
           set -euo pipefail
+          df -h / | tee -a "$GITHUB_STEP_SUMMARY"
           docker pull "$UE_IMAGE"
+          docker image inspect "$UE_IMAGE" --format 'Resolved image digest(s): {{json .RepoDigests}}' >> "$GITHUB_STEP_SUMMARY"
           docker run --rm --entrypoint /bin/bash "$UE_IMAGE" -lc '
             set -euo pipefail
             uat=/home/ue4/UnrealEngine/Engine/Build/BatchFiles/RunUAT.sh
