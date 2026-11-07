@@ -217,15 +217,7 @@ jobs:
               if ($matched.Count -eq 0) { $matched = @('Unclassified BuildGraph failure — needs targeted diagnostics') }
               Write-Output "BuildGraph diagnostic categories (safe, nonproprietary): $($matched -join ', ')."
               Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- BuildGraph error categories: $($matched -join ', ')"
-              $errorLines = ([regex]::Matches($privateLog,'(?im)^.{0,500}(ERROR:|error CS[0-9]{4}|error MSB[0-9]{4}|Exception:).{0,500}            Write-Output 'Android-enabled installed-engine BuildGraph returned success. No engine artifacts uploaded.'
-          }
-          finally {
-            Remove-Item Env:UE_GIT_SOURCE_TOKEN -ErrorAction SilentlyContinue
-            $cleanupFiles = @($askpass,$out,$err,$buildOut,$buildErr) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
-            if ($cleanupFiles.Count -gt 0) { Remove-Item -LiteralPath $cleanupFiles -Force -ErrorAction SilentlyContinue }
-            if (Test-Path $folder) { Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue }
-          }
-)).Count
+              $errorLines = ([regex]::Matches($privateLog, 'ERROR:|error CS[0-9]{4}|error MSB[0-9]{4}|Exception:', 'IgnoreCase')).Count
               Write-Output "BuildGraph error-marker line count: $errorLines."
               Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- BuildGraph error-marker line count: $errorLines"
               Remove-Variable privateLog -ErrorAction SilentlyContinue
