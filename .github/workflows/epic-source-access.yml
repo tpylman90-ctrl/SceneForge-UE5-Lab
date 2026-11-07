@@ -1,0 +1,50 @@
+name: Epic source access feasibility
+
+# Source access probe only; no Unreal source is downloaded, uploaded, or logged.
+# Public project code is permitted; private Unreal source never enters this repository.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/epic-source-access.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  epic-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check existing Epic-linked token for UE source access
+        shell: bash
+        env:
+          EPIC_GHCR_TOKEN: ${{ secrets.EPIC_GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EPIC_GHCR_TOKEN:-}" ]; then
+            echo "Existing EPIC_GHCR_TOKEN is missing."
+            echo "### Epic source access\nNo existing token configured" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Only HTTP status: neither token nor response contents are displayed.
+          http_code=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --header "Authorization: Bearer $EPIC_GHCR_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/EpicGames/UnrealEngine)
+          case "$http_code" in
+            200)
+              echo "Epic source repository is accessible to the existing token."
+              echo "### Epic source access\nAccessible (HTTP 200) — source checkout *could* be evaluated next. This does not prove a free runner can compile Android." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            401|403|404)
+              echo "Existing GHCR token cannot read Epic's private UnrealEngine source repository (HTTP $http_code)."
+              echo "### Epic source access\nNot authorized with existing token (HTTP $http_code). Epic entitlement and a token with suitable repository permissions would be needed for a source-build attempt." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "Epic source repository API returned HTTP $http_code; indeterminate."
+              echo "### Epic source access\nInconclusive API status: $http_code" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac

@@ -32,6 +32,14 @@ class LabContractTests(unittest.TestCase):
                      ".github/workflows/android-package.yml"):
             self.assertTrue((ROOT / path).is_file(), path)
 
+    def test_epic_source_probe_does_not_fetch_or_publish_engine(self):
+        workflow = (ROOT / ".github/workflows/epic-source-access.yml").read_text()
+        self.assertIn("curl --silent --show-error --output /dev/null", workflow)
+        self.assertIn("https://api.github.com/repos/EpicGames/UnrealEngine", workflow)
+        self.assertNotIn("git clone", workflow)
+        self.assertNotIn("upload-artifact", workflow)
+        self.assertNotIn("set -x", workflow)
+
     def test_container_packaging_uses_epic_default_user(self):
         # The official engine directory is inaccessible to the GitHub runner
         # identity when forced into the container with docker --user.
