@@ -35,15 +35,21 @@ def sdk_state():
     sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
     root = Path(sdk) if sdk else None
     ndk_env = os.environ.get("NDKROOT") or os.environ.get("ANDROID_NDK_ROOT")
-    ndk = Path(ndk_env) if ndk_env else (root / "ndk" / NDK_R27C if root else None)
-    props = ndk / "source.properties" if ndk else None
+    candidates = [Path(ndk_env)] if ndk_env else []
+    if root and (root / "ndk").is_dir():
+        candidates.extend(sorted((root / "ndk").iterdir()))
     ndk_ok = False
-    if props and props.is_file():
-        try:
-            ndk_ok = bool(re.search(r"^Pkg\.Revision\s*=\s*27\.2\.12479018\s*$",
-                                   props.read_text(encoding="utf-8"), re.MULTILINE))
-        except OSError:
-            pass
+    for ndk in candidates:
+        props = ndk / "source.properties"
+        if props.is_file():
+            try:
+                found = re.search(r"^Pkg\.Revision\s*=\s*27\.2\.12479018\s*$",
+                                  props.read_text(encoding="utf-8"), re.MULTILINE)
+                if found:
+                    ndk_ok = True
+                    break
+            except OSError:
+                pass
     return {
         "sdk_configured": bool(root and root.is_dir()),
         "android_35_present": bool(root and (root / "platforms" / "android-35").is_dir()),
