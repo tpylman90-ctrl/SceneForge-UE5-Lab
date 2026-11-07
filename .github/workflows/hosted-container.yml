@@ -1,0 +1,125 @@
+name: Official Epic container feasibility (manual)
+
+# Official Epic development image is license/credential gated. NEVER log tokens
+# or upload the proprietary engine as an artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Probe official UE 5.8 container on hosted Ubuntu'
+        type: choice
+        required: true
+        default: manifest
+        options:
+          - manifest
+          - pull
+          - android
+
+permissions:
+  contents: read
+
+jobs:
+  container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      UE_IMAGE: ghcr.io/epicgames/unreal-engine:dev-slim-5.8.0@sha256:daac02628ea880513e18ccd1364b1cac949d40609b24c040d73872d8214a0c46
+      GHCR_USER: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Project validation
+        run: python3 -m unittest discover -s scripts/ci/tests -v
+      - name: Baseline runner report
+        run: python3 scripts/ci/runner_probe.py --report-dir reports
+      - name: Authenticate to Epic's GHCR development image
+        env:
+          EPIC_GHCR_TOKEN: ${{ secrets.EPIC_GHCR_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$EPIC_GHCR_TOKEN" ]; then
+            echo "::error::Set Actions secret EPIC_GHCR_TOKEN to an Epic-entitled GitHub PAT with read:packages. See docs/EPIC_CONTAINER.md."
+            exit 2
+          fi
+          printf '%s' "$EPIC_GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+      - name: Test authenticated manifest availability (no engine download)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker manifest inspect "$UE_IMAGE" >/dev/null
+          echo "Official pinned image manifest was accessible." >> "$GITHUB_STEP_SUMMARY"
+          df -h / | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Pull official UE installed-build container
+        if: ${{ inputs.stage == 'pull' || inputs.stage == 'android' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$UE_IMAGE"
+          docker run --rm --entrypoint /bin/bash "$UE_IMAGE" -lc '
+            set -euo pipefail
+            uat=/home/ue4/UnrealEngine/Engine/Build/BatchFiles/RunUAT.sh
+            test -f "$uat"
+            cat /home/ue4/UnrealEngine/Engine/Build/Build.version
+          '
+          docker image inspect "$UE_IMAGE" --format 'Unpacked image size: {{.Size}} bytes'
+          df -h / | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-java@v4
+        if: ${{ inputs.stage == 'android' }}
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install pinned Android toolchain on host
+        if: ${{ inputs.stage == 'android' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'platforms;android-35' 'build-tools;35.0.1' 'ndk;27.2.12479018'
+          test -d "$ANDROID_HOME/ndk/27.2.12479018"
+          test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/build-tools/35.0.1"
+          java -version
+          df -h / | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Cook and package Android APK inside Epic container
+        if: ${{ inputs.stage == 'android' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .uehome dist
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --entrypoint /bin/bash \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$ANDROID_HOME:/opt/android-sdk" \
+            --volume "$JAVA_HOME:/opt/java:ro" \
+            --workdir /workspace \
+            --env HOME=/workspace/.uehome \
+            --env UE_ROOT=/home/ue4/UnrealEngine \
+            --env ANDROID_HOME=/opt/android-sdk \
+            --env ANDROID_SDK_ROOT=/opt/android-sdk \
+            --env NDKROOT=/opt/android-sdk/ndk/27.2.12479018 \
+            --env JAVA_HOME=/opt/java \
+            "$UE_IMAGE" -lc 'python3 scripts/ci/package_android.py --archive-dir /workspace/dist'
+      - name: Upload Android APK only when created
+        if: ${{ inputs.stage == 'android' && success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ue5lab-hosted-android-${{ github.run_number }}
+          path: dist/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload nonproprietary capacity report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-runner-report-${{ github.run_number }}
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: End registry session
+        if: always()
+        run: docker logout ghcr.io || true

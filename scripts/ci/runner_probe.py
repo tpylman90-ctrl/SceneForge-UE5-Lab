@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -35,12 +36,19 @@ def sdk_state():
     root = Path(sdk) if sdk else None
     ndk_env = os.environ.get("NDKROOT") or os.environ.get("ANDROID_NDK_ROOT")
     ndk = Path(ndk_env) if ndk_env else (root / "ndk" / NDK_R27C if root else None)
+    props = ndk / "source.properties" if ndk else None
+    ndk_ok = False
+    if props and props.is_file():
+        try:
+            ndk_ok = bool(re.search(r"^Pkg\\.Revision\\s*=\\s*27\\.2\\.12479018\\s*$",
+                                   props.read_text(encoding="utf-8"), re.MULTILINE))
+        except OSError:
+            pass
     return {
         "sdk_configured": bool(root and root.is_dir()),
         "android_35_present": bool(root and (root / "platforms" / "android-35").is_dir()),
         "build_tools_35_present": bool(root and (root / "build-tools" / "35.0.1").is_dir()),
-        "ndk_r27c_present": bool(ndk and ndk.is_dir() and (NDK_R27C in str(ndk) or
-                              (ndk / "source.properties").is_file())),
+        "ndk_r27c_present": ndk_ok,
     }
 
 

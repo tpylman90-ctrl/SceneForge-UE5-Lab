@@ -2,12 +2,14 @@
 
 | Gate | Evidence needed | Current status |
 | --- | --- | --- |
-| A. GitHub lab scaffold | Workflow, pinned .uproject, source-only repo | Configured, awaiting CI |
-| B. Hosted runner sizing | Successful Ubuntu and Windows probes with report artifacts | Awaiting CI |
-| C. Free engine provisioning | UE 5.8 legally installed on a runner; enough disk/RAM for cook | **Not established** |
+| A. GitHub lab scaffold | Workflow, pinned .uproject, source-only repo | Configured; GitHub Actions #1 succeeded |
+| B. Hosted runner sizing | Successful Ubuntu and Windows probes with report artifacts | Confirmed: Ubuntu 85.8 GiB and Windows 147.0 GiB free at probe time |
+| C. Free engine provisioning | Official Epic GHCR image pulled on hosted Ubuntu (credentialed) or installed on separate authorized runner | **Not established** |
 | D. Automated APK | A successful UE BuildCookRun job and downloadable APK artifact | **Not established** |
 | E. Android compatibility | Install and launch on the Moto G Play 2026 | **Not established** |
 | F. Hover-racer suitability | Drivable craft, track, FPS measurements vs Godot | **Not established** |
+
+Official Epic UE 5.8 container route: [EPIC_CONTAINER.md](EPIC_CONTAINER.md). This avoids an immediate self-hosted runner but requires Epic-entitled GitHub container access. The 5.8.0 development image is large and may still exceed available runner resources after Android tooling and cook output.
 
 ## Decision rule
 
