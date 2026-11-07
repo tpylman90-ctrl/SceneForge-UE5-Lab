@@ -48,7 +48,7 @@ jobs:
           else { throw 'No token authorized for Epic private Unreal source.' }
           # The GitHub runner's temp/workspace is commonly on D:, while C:
           # only has ~31 GiB. Check the ACTUAL source-checkout volume.
-          $checkoutDrive = ([System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)).TrimEnd('\\').TrimEnd(':')
+          $checkoutDrive = ([System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)).TrimEnd('\').TrimEnd(':')
           function FreeGiB() {
             [math]::Round((Get-PSDrive -Name $checkoutDrive).Free / 1GB, 2)
           }
