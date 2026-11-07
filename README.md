@@ -7,7 +7,7 @@ A **standalone, no-cost feasibility experiment** to see whether SceneForge's Git
 ## Current state
 
 - `preflight.yml`: **active** on every push or manual dispatch. Checks repo integrity and examines free GitHub-hosted Linux/Windows runner resources and installed Android/Unreal tools; uploads a probe report. **This does NOT build an APK.**
-- `hosted-container.yml`: **prepared, not yet validated**. Manual test of the official Epic UE 5.8 development container on an ordinary free GitHub runner. Requires an Epic-entitled GitHub account and a read-only GHCR token stored as a GitHub Actions secret. Test modes: manifest, pull, Android packaging. **Not tested without the credential.**
+- `hosted-container.yml`: **engine pull confirmed in Actions run #42321825428**; Android packaging is experimental. Test of the official Epic UE 5.8 development container on an ordinary free GitHub runner. Requires an Epic-entitled GitHub account and a read-only GHCR token stored as a GitHub Actions secret. Test modes: manifest, pull, Android packaging. **Not tested without the credential.**
 - `android-package.yml`: **prepared, not yet validated**. Manually callable only on an appropriately configured self-hosted runner with a licensed local Unreal Engine 5.8 installation and Android toolchain. It will remain queued if no eligible runner is online.
 - `SceneForgeUE5Lab.uproject`: minimal content-free UE 5.8 Android project shell for a packaging smoke test. It uses the engine's Entry map; **no hovercraft, track, or imported game assets yet**.
 
