@@ -1,0 +1,121 @@
+name: UE5.8 Linux dependency footprint
+
+# Epic's proprietary source and dependencies remain on an ephemeral runner.
+# No engine files, tokens, artifacts, caches, or private log lines are uploaded.
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/ue-dependencies-sizing.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies-sizing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Bounded source checkout and official Setup.sh footprint
+        shell: bash
+        env:
+          EPIC_SOURCE_TOKEN: ${{ secrets.EPIC_SOURCE_TOKEN }}
+          EPIC_SOURCE_CLASSIC_TOKEN: ${{ secrets.EPIC_SOURCE_CLASSIC_TOKEN }}
+        run: |
+          set -euo pipefail
+          probe() {
+            curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --header "Authorization: Bearer $1" \
+              --header 'Accept: application/vnd.github+json' \
+              https://api.github.com/repos/EpicGames/UnrealEngine
+          }
+          token=""
+          token_type=""
+          if [ -n "$EPIC_SOURCE_TOKEN" ] && [ "$(probe "$EPIC_SOURCE_TOKEN")" = 200 ]; then
+            token="$EPIC_SOURCE_TOKEN"
+            token_type=fine-grained
+          elif [ -n "$EPIC_SOURCE_CLASSIC_TOKEN" ] && [ "$(probe "$EPIC_SOURCE_CLASSIC_TOKEN")" = 200 ]; then
+            token="$EPIC_SOURCE_CLASSIC_TOKEN"
+            token_type=temporary-classic
+          else
+            echo "::error::No authorized Epic source token."
+            exit 2
+          fi
+          avail=$(df -Pk / | awk 'NR==2 {print $4}')
+          if [ "$avail" -lt 62914560 ]; then
+            echo "::error::Need at least 60 GiB available for safe dependency sizing."
+            exit 3
+          fi
+          export UE_SOURCE_GIT_TOKEN="$token"
+          unset token
+          dir="$RUNNER_TEMP/ue58-dependencies"
+          askpass="$RUNNER_TEMP/ue58-deps-askpass.sh"
+          private_log="$RUNNER_TEMP/ue58-deps-private.log"
+          cleanup() {
+            rm -f "$askpass" "$private_log"
+            unset UE_SOURCE_GIT_TOKEN
+            rm -rf "$dir"
+          }
+          trap cleanup EXIT
+          cat > "$askpass" <<'ASKPASS'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s' x-access-token ;;
+            *Password*) printf '%s' "$UE_SOURCE_GIT_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          ASKPASS
+          chmod 700 "$askpass"
+          export GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0
+          echo "Acquiring licensed UE 5.8 source privately, without verbose Git logging."
+          timeout 650 git -c credential.helper= clone \
+            --quiet --depth=1 --filter=blob:none \
+            --single-branch --branch=5.8 \
+            https://github.com/EpicGames/UnrealEngine.git "$dir"
+          unset UE_SOURCE_GIT_TOKEN
+          rm -f "$askpass"
+          test -f "$dir/Setup.sh"
+          source_bytes=$(du -sb "$dir" | awk '{print $1}')
+          before_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+          echo "Starting bounded UE Setup.sh binary dependency acquisition."
+          cd "$dir"
+          # Run Epic's own dependency setup; private output stays only in a local
+          # transient file. The task is intentionally stopped if space runs low.
+          setsid timeout --signal=TERM --kill-after=30s 1200s \
+            bash ./Setup.sh > "$private_log" 2>&1 &
+          setup_pid=$!
+          disk_guard=passed
+          while kill -0 "$setup_pid" 2>/dev/null; do
+            sleep 15
+            current_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+            if [ "$current_kb" -lt 26214400 ]; then
+              disk_guard=stopped-at-25GiB
+              kill -TERM -- "-$setup_pid" 2>/dev/null || true
+              break
+            fi
+          done
+          set +e
+          wait "$setup_pid"
+          setup_rc=$?
+          set -e
+          after_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+          after_bytes=$(du -sb "$dir" | awk '{print $1}')
+          downloaded_bytes=$((after_bytes-source_bytes))
+          {
+            echo "### UE5.8 dependency footprint on free GitHub Linux runner"
+            echo "- Authorized token: $token_type"
+            echo "- Source checkout size in bytes: $source_bytes"
+            echo "- Source plus available dependencies in bytes: $after_bytes"
+            echo "- Added dependency data in bytes: $downloaded_bytes"
+            echo "- Disk available after source checkout, KiB: $before_kb"
+            echo "- Disk available after Setup, KiB: $after_kb"
+            echo "- Setup.sh exit status: $setup_rc"
+            echo "- Disk safety guard: $disk_guard"
+            echo "- UE installed build or engine compilation: NOT attempted"
+            echo "- UE binary dependencies or source published: NO"
+            echo "- APK produced: NO"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$setup_rc" -ne 0 ]; then
+            echo "::error::UE5.8 Setup.sh incomplete. See sanitized metrics in job summary; private setup output intentionally withheld."
+            exit 4
+          fi
