@@ -1,0 +1,166 @@
+name: UE5.8 Windows Android installed engine trial
+
+# Authorized UE source and downloaded dependencies live only on temporary runner.
+# No private Epic engine artifacts, code, cache, or credential logs are uploaded.
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/ue-windows-installed-engine-trial.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-deps:
+    runs-on: windows-2025
+    timeout-minutes: 350
+    steps:
+      - name: Bounded UE5.8 Android-enabled installed engine BuildGraph trial
+        shell: pwsh
+        env:
+          EPIC_SOURCE_TOKEN: ${{ secrets.EPIC_SOURCE_TOKEN }}
+          EPIC_SOURCE_CLASSIC_TOKEN: ${{ secrets.EPIC_SOURCE_CLASSIC_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $api = 'https://api.github.com/repos/EpicGames/UnrealEngine'
+          function Test-SourceAccess([string]$token) {
+            if ([string]::IsNullOrEmpty($token)) { return $false }
+            try {
+              $r = Invoke-WebRequest -Uri $api -Headers @{
+                Authorization = "Bearer $token"
+                Accept = 'application/vnd.github+json'
+                'X-GitHub-Api-Version' = '2022-11-28'
+              } -Method Get -TimeoutSec 25 -UseBasicParsing
+              return $r.StatusCode -eq 200
+            }
+            catch { return $false }
+          }
+          $tokenType = ''
+          if (Test-SourceAccess $env:EPIC_SOURCE_TOKEN) {
+            $env:UE_GIT_SOURCE_TOKEN = $env:EPIC_SOURCE_TOKEN
+            $tokenType = 'fine-grained'
+          }
+          elseif (Test-SourceAccess $env:EPIC_SOURCE_CLASSIC_TOKEN) {
+            $env:UE_GIT_SOURCE_TOKEN = $env:EPIC_SOURCE_CLASSIC_TOKEN
+            $tokenType = 'temporary-classic'
+          }
+          else { throw 'No token authorized for Epic private Unreal source.' }
+          # The GitHub runner's temp/workspace is commonly on D:, while C:
+          # only has ~31 GiB. Check the ACTUAL source-checkout volume.
+          $checkoutDrive = ([System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)).TrimEnd('\').TrimEnd(':')
+          function FreeGiB() {
+            [math]::Round((Get-PSDrive -Name $checkoutDrive).Free / 1GB, 2)
+          }
+          $before = FreeGiB
+          Write-Output "Runner temp drive: $checkoutDrive; free: $before GiB."
+          if ($before -lt 105) { throw "Insufficient disk headroom on checkout drive for safe Windows dependency test: $before GiB." }
+          $folder = Join-Path $env:RUNNER_TEMP 'ue58-windows-dependencies'
+          $askpass = Join-Path $env:RUNNER_TEMP 'ue58-askpass.cmd'
+          $out = Join-Path $env:RUNNER_TEMP 'ue58-setup-private-stdout.log'
+          $err = Join-Path $env:RUNNER_TEMP 'ue58-setup-private-stderr.log'
+          @'
+          @echo off
+          echo %~1 | findstr /I "Username" >nul
+          if not errorlevel 1 (
+            echo x-access-token
+          ) else (
+            echo %UE_GIT_SOURCE_TOKEN%
+          )
+          '@ | Set-Content -Path $askpass -Encoding ascii
+          $env:GIT_ASKPASS = $askpass
+          $env:GIT_TERMINAL_PROMPT = '0'
+          $env:GCM_INTERACTIVE = 'Never'
+          $start = Get-Date
+          try {
+            Write-Output 'Checking out licensed UE 5.8 source; private Git output suppressed.'
+            & git -c credential.helper= clone --quiet --depth 1 --filter=blob:none --single-branch --branch 5.8 https://github.com/EpicGames/UnrealEngine.git $folder 2>$null
+            if ($LASTEXITCODE -ne 0) { throw "Private git clone failed with status $LASTEXITCODE." }
+            Remove-Item $askpass -Force -ErrorAction SilentlyContinue
+            Remove-Item Env:UE_GIT_SOURCE_TOKEN -ErrorAction SilentlyContinue
+            if (-not (Test-Path (Join-Path $folder 'Setup.bat'))) { throw 'Unreal Setup.bat missing after authorized checkout.' }
+            $checkoutFree = FreeGiB
+            if ($checkoutFree -lt 90) { throw "Insufficient free space after clone: $checkoutFree GiB." }
+            Write-Output 'Running bounded Unreal Setup.bat for Windows + Android. Other platforms excluded.'
+            # Preserve Android support. Avoid downloading other host/console platforms.
+            $excludes = '-exclude=Mac -exclude=MacOS -exclude=IOS -exclude=TVOS -exclude=Linux -exclude=LinuxArm64 -exclude=Win32'
+            $command = "Setup.bat $excludes"
+            $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/s', '/c', $command -WorkingDirectory $folder -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden
+            $stopped = 'no'
+            $stopReason = ''
+            $deadline = (Get-Date).AddMinutes(65)
+            while (-not $p.HasExited) {
+              Start-Sleep -Seconds 15
+              $p.Refresh()
+              if ((FreeGiB) -lt 32) {
+                $stopped = 'yes'
+                $stopReason = 'disk-below-32-GiB'
+                break
+              }
+              if ((Get-Date) -gt $deadline) {
+                $stopped = 'yes'
+                $stopReason = 'dependency-time-budget'
+                break
+              }
+            }
+            if ($stopped -eq 'yes' -and -not $p.HasExited) {
+              & taskkill.exe /F /T /PID $p.Id 2>$null | Out-Null
+              $p.WaitForExit(20000) | Out-Null
+            }
+            $p.Refresh()
+            $rc = if ($stopped -eq 'yes') { 99 } else { $p.ExitCode }
+            $after = FreeGiB
+            $measured = [math]::Round($before - $after, 2)
+            $summary = @(
+              '### UE 5.8 Windows+Android source dependency footprint',
+              "- Source credential: $tokenType",
+              "- Starting free disk (GiB): $before",
+              "- Free disk after source checkout (GiB): $checkoutFree",
+              "- Free disk after Setup (GiB): $after",
+              "- Disk consumed total (GiB): $measured",
+              "- Setup exit code: $rc",
+              "- Safety cutoff reached: $stopped",
+              "- Cutoff reason: $stopReason",
+              '- Android dependency exclusions: NONE',
+              '- Engine compilation: follows successful dependency setup only',
+              '- APK generated: NO (installed-engine compilation test)',
+              '- Epic private source or dependency files uploaded: NO'
+            )
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ($summary -join [Environment]::NewLine)
+            $summary | ForEach-Object { Write-Output $_ }
+            if ($rc -ne 0) { throw 'Dependency setup incomplete; compile not attempted.' }
+            if ((FreeGiB) -lt 45) { throw 'Insufficient post-Setup disk headroom for compilation.' }
+            Write-Output 'Dependencies completed. Starting Android-enabled Unreal installed-engine BuildGraph.'
+            $config = Join-Path $folder 'Engine/Saved/UnrealBuildTool/BuildConfiguration.xml'
+            New-Item -ItemType Directory -Force -Path (Split-Path $config) | Out-Null
+            $xml = '<Configuration xmlns="https://www.unrealengine.com/BuildConfiguration"><BuildConfiguration><MaxParallelActions>2</MaxParallelActions></BuildConfiguration><ParallelExecutor><MemoryPerActionBytes>4294967296</MemoryPerActionBytes></ParallelExecutor></Configuration>'
+            Set-Content -Path $config -Value $xml -Encoding utf8
+            $buildOut = Join-Path $env:RUNNER_TEMP 'ue58-build-private-stdout.log'
+            $buildErr = Join-Path $env:RUNNER_TEMP 'ue58-build-private-stderr.log'
+            $args = 'BuildGraph -Script=Engine/Build/InstalledEngineBuild.xml -Target="Make Installed Build Win64" -set:WithWin64=true -set:WithAndroid=true -set:WithDDC=false -set:WithLinux=false -set:WithLinuxArm64=false -set:WithMac=false -set:WithIOS=false -set:WithTVOS=false -set:WithFullDebugInfo=false -set:WithClient=false -set:WithServer=false -NoP4 -unattended'
+            $uat = Join-Path $folder 'Engine/Build/BatchFiles/RunUAT.bat'
+            $build = Start-Process -FilePath $uat -ArgumentList $args -WorkingDirectory $folder -RedirectStandardOutput $buildOut -RedirectStandardError $buildErr -PassThru -WindowStyle Hidden
+            $buildDeadline = (Get-Date).AddMinutes(240)
+            $buildStop = 'none'
+            while (-not $build.HasExited) {
+              Start-Sleep -Seconds 20
+              $build.Refresh()
+              if ((FreeGiB) -lt 20) { $buildStop = 'disk-safety-limit'; break }
+              if ((Get-Date) -gt $buildDeadline) { $buildStop = 'build-time-limit'; break }
+            }
+            if ($buildStop -ne 'none' -and -not $build.HasExited) {
+              & taskkill.exe /F /T /PID $build.Id 2>$null | Out-Null
+              $build.WaitForExit(20000) | Out-Null
+            }
+            $build.Refresh()
+            $buildCode = if ($buildStop -ne 'none') { 98 } else { $build.ExitCode }
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Android BuildGraph exit code: $buildCode; stop reason: $buildStop; remaining GiB: $(FreeGiB)"
+            Write-Output "BuildGraph exit code: $buildCode; stop reason: $buildStop; free disk GiB: $(FreeGiB)."
+            if ($buildCode -ne 0) { throw 'Bounded Android-enabled Unreal BuildGraph failed. No engine artifacts were uploaded.' }
+            Write-Output 'Android-enabled installed-engine BuildGraph returned success. No engine artifacts uploaded.'
+          }
+          finally {
+            Remove-Item Env:UE_GIT_SOURCE_TOKEN -ErrorAction SilentlyContinue
+            Remove-Item $askpass,$out,$err,$buildOut,$buildErr -ErrorAction SilentlyContinue
+            if (Test-Path $folder) { Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue }
+          }
