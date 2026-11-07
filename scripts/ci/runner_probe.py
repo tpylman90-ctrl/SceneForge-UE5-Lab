@@ -40,7 +40,7 @@ def sdk_state():
     ndk_ok = False
     if props and props.is_file():
         try:
-            ndk_ok = bool(re.search(r"^Pkg\\.Revision\\s*=\\s*27\\.2\\.12479018\\s*$",
+            ndk_ok = bool(re.search(r"^Pkg\.Revision\s*=\s*27\.2\.12479018\s*$",
                                    props.read_text(encoding="utf-8"), re.MULTILINE))
         except OSError:
             pass
