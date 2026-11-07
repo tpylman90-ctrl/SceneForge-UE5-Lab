@@ -126,8 +126,22 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .uehome dist
+          # Epic's engine directory belongs to the image's non-root 'ue4'
+          # user. Overriding it with the hosted runner UID causes EACCES
+          # even when trying to stat RunUAT.sh.
+          host_uid=$(id -u)
+          host_gid=$(id -g)
+          image_uid=$(docker run --rm --entrypoint /usr/bin/id "$UE_IMAGE" -u)
+          image_gid=$(docker run --rm --entrypoint /usr/bin/id "$UE_IMAGE" -g)
+          if [ "$image_uid" = 0 ]; then
+            echo "::error::Official Unreal image unexpectedly defaults to root; refusing root cook."
+            exit 5
+          fi
+          echo "Container uid/gid: $image_uid:$image_gid"
+          echo "Runner uid/gid: $host_uid:$host_gid"
+          # Project files must be writable by the image's ue4 user.
+          sudo chown -R "$image_uid:$image_gid" "$GITHUB_WORKSPACE"
           docker run --rm \
-            --user "$(id -u):$(id -g)" \
             --entrypoint /bin/bash \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             --volume "$ANDROID_HOME:/opt/android-sdk" \
@@ -140,6 +154,13 @@ jobs:
             --env NDKROOT=/opt/android-sdk/ndk/27.2.12479018 \
             --env JAVA_HOME=/opt/java \
             "$UE_IMAGE" -lc 'python3 scripts/ci/package_android.py --archive-dir /workspace/dist'
+      - name: Restore host ownership for artifact uploader
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -d "$GITHUB_WORKSPACE" ]; then
+            sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+          fi
       - name: Upload Android APK only when created
         if: ${{ (inputs.stage == 'android' || github.event_name == 'push') && success() }}
         uses: actions/upload-artifact@v4
