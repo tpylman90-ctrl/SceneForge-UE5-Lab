@@ -4,8 +4,8 @@ name: Official Epic container feasibility
 # Official Epic development image is license/credential gated. NEVER log tokens
 # or upload the proprietary engine as an artifact.
 on:
-  # Initial manifest smoke check is triggered only when this workflow file changes.
-  # Restricted to owner-controlled main; no untrusted pull_request jobs use the PAT.
+  # Build test is triggered only when this trusted main-branch workflow changes.
+  # No PR events or untrusted code use the registry PAT.
   push:
     branches: [main]
     paths:
@@ -83,23 +83,37 @@ jobs:
           docker image inspect "$UE_IMAGE" --format 'Unpacked image size: {{.Size}} bytes'
           df -h / | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-java@v4
-        if: ${{ inputs.stage == 'android' }}
+        if: ${{ inputs.stage == 'android' || github.event_name == 'push' }}
         with:
           distribution: temurin
           java-version: '21'
       - name: Install pinned Android toolchain on host
-        if: ${{ inputs.stage == 'android' }}
+        if: ${{ inputs.stage == 'android' || github.event_name == 'push' }}
         shell: bash
         run: |
           set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
           sdkmanager --install 'platforms;android-35' 'build-tools;35.0.1' 'ndk;27.2.12479018'
           test -d "$ANDROID_HOME/ndk/27.2.12479018"
           test -d "$ANDROID_HOME/platforms/android-35"
           test -d "$ANDROID_HOME/build-tools/35.0.1"
           java -version
           df -h / | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Check free space before Unreal packaging
+        if: ${{ inputs.stage == 'android' || github.event_name == 'push' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h / | tee -a "$GITHUB_STEP_SUMMARY"
+          free -h | tee -a "$GITHUB_STEP_SUMMARY"
+          # Safe failure if less than 8GiB remain after image + Android SDK.
+          avail_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+          if [ "$avail_kb" -lt 8388608 ]; then
+            echo "::error::Insufficient disk headroom (<8GiB) for Unreal cook."
+            exit 4
+          fi
       - name: Cook and package Android APK inside Epic container
-        if: ${{ inputs.stage == 'android' }}
+        if: ${{ inputs.stage == 'android' || github.event_name == 'push' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -119,7 +133,7 @@ jobs:
             --env JAVA_HOME=/opt/java \
             "$UE_IMAGE" -lc 'python3 scripts/ci/package_android.py --archive-dir /workspace/dist'
       - name: Upload Android APK only when created
-        if: ${{ inputs.stage == 'android' && success() }}
+        if: ${{ (inputs.stage == 'android' || github.event_name == 'push') && success() }}
         uses: actions/upload-artifact@v4
         with:
           name: ue5lab-hosted-android-${{ github.run_number }}
