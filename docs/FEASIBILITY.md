@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | A. GitHub lab scaffold | Workflow, pinned .uproject, source-only repo | Configured; GitHub Actions #1 succeeded |
 | B. Hosted runner sizing | Successful Ubuntu and Windows probes with report artifacts | Confirmed: Ubuntu 85.8 GiB and Windows 147.0 GiB free at probe time |
-| C. Free engine provisioning | Official Epic GHCR image pulled on hosted Ubuntu (credentialed) or installed on separate authorized runner | **Not established** |
+| C. Free engine provisioning | Official Epic GHCR image pulled on hosted Ubuntu (credentialed) or installed on separate authorized runner | **Blocked: registry denied (runs #5–6); Epic organization entitlement / token scope needs verification** |
 | D. Automated APK | A successful UE BuildCookRun job and downloadable APK artifact | **Not established** |
 | E. Android compatibility | Install and launch on the Moto G Play 2026 | **Not established** |
 | F. Hover-racer suitability | Drivable craft, track, FPS measurements vs Godot | **Not established** |
@@ -26,3 +26,10 @@ When gate C can be satisfied on no-cost infrastructure, run the optional manual 
 - Android launch works but device performance is markedly below existing Godot baseline (~60 FPS on Crimson Serpent).
 
 Any unsuccessful branch remains an experiment; do not merge or migrate the Godot game.
+
+## Live GHCR access tests — November 6, 2026 (America/Detroit)
+
+- [Run 42321414655](https://github.com/tpylman90-ctrl/SceneForge-UE5-Lab/actions/runs/42321414655): Docker GHCR login succeeded using the stored secret; UE 5.8 digest manifest request returned `denied`.
+- [Run 42321489184](https://github.com/tpylman90-ctrl/SceneForge-UE5-Lab/actions/runs/42321489184): repeat using the plain official `dev-slim-5.8.0` tag; login succeeded; manifest still returned `denied`.
+
+No Epic engine downloaded or APK produced. Most likely next checks: confirm Epic Games GitHub organization invitation was **accepted**, the token belongs to that linked GitHub account, and it has `read:packages`. Successful Docker registry login alone does not prove Epic package authorization.
