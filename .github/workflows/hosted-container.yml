@@ -4,7 +4,7 @@ name: Official Epic container feasibility
 # Official Epic development image is license/credential gated. NEVER log tokens
 # or upload the proprietary engine as an artifact.
 on:
-  # Build test is triggered only when this trusted main-branch workflow changes.
+  # Platform inspection is triggered only when this trusted main-branch workflow changes.
   # No PR events or untrusted code use the registry PAT.
   push:
     branches: [main]
@@ -20,6 +20,7 @@ on:
         options:
           - manifest
           - pull
+          - inspect
           - android
 
 permissions:
@@ -67,7 +68,7 @@ jobs:
           echo "Official pinned image manifest was accessible." >> "$GITHUB_STEP_SUMMARY"
           df -h / | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pull official UE installed-build container
-        if: ${{ inputs.stage == 'pull' || inputs.stage == 'android' || github.event_name == 'push' }}
+        if: ${{ inputs.stage == 'pull' || inputs.stage == 'inspect' || inputs.stage == 'android' || github.event_name == 'push' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -82,19 +83,44 @@ jobs:
           '
           docker image inspect "$UE_IMAGE" --format 'Unpacked image size: {{.Size}} bytes'
           df -h / | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Inspect official engine Android platform components
+        if: ${{ inputs.stage == 'inspect' || inputs.stage == 'android' || github.event_name == 'push' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          docker run --rm --entrypoint /bin/bash \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --env UE_ROOT=/home/ue4/UnrealEngine \
+            --workdir /workspace "$UE_IMAGE" \
+            -lc 'python3 scripts/ci/inspect_engine_android.py' \
+              | tee reports/android-engine-components.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("reports/android-engine-components.json").read_text())
+          with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("### Unreal Android engine component audit\n")
+              f.write(f"- Automation assembly present: **{data['android_automation_assembly']}**\n")
+              f.write(f"- Android engine runtime artifacts: **{data['android_runtime_artifacts']}**\n")
+              f.write(f"- Verdict: **{data['assessment']}**\n")
+          PY
+          if [ "${{ inputs.stage || 'inspect' }}" = "android" ]; then
+            python3 scripts/ci/check_android_support.py reports/android-engine-components.json
+          fi
       - uses: actions/setup-java@v4
-        if: ${{ inputs.stage == 'android' || github.event_name == 'push' }}
+        if: ${{ inputs.stage == 'android' }}
         with:
           distribution: temurin
           java-version: '21'
       - name: Install Android SDK command-line tools
-        if: ${{ inputs.stage == 'android' || github.event_name == 'push' }}
+        if: ${{ inputs.stage == 'android' }}
         uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools'
           log-accepted-android-sdk-licenses: false
       - name: Install pinned Android toolchain on host
-        if: ${{ inputs.stage == 'android' || github.event_name == 'push' }}
+        if: ${{ inputs.stage == 'android' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -108,7 +134,7 @@ jobs:
           java -version
           df -h / | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Check free space before Unreal packaging
-        if: ${{ inputs.stage == 'android' || github.event_name == 'push' }}
+        if: ${{ inputs.stage == 'android' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -121,7 +147,7 @@ jobs:
             exit 4
           fi
       - name: Cook and package Android APK inside Epic container
-        if: ${{ inputs.stage == 'android' || github.event_name == 'push' }}
+        if: ${{ inputs.stage == 'android' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -162,7 +188,7 @@ jobs:
             sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
           fi
       - name: Upload Android APK only when created
-        if: ${{ (inputs.stage == 'android' || github.event_name == 'push') && success() }}
+        if: ${{ inputs.stage == 'android' && success() }}
         uses: actions/upload-artifact@v4
         with:
           name: ue5lab-hosted-android-${{ github.run_number }}

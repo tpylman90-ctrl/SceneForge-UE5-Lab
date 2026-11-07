@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | A. GitHub lab scaffold | Workflow, pinned .uproject, source-only repo | Configured; GitHub Actions #1 succeeded |
 | B. Hosted runner sizing | Successful Ubuntu and Windows probes with report artifacts | Confirmed: Ubuntu 85.8 GiB and Windows 147.0 GiB free at probe time |
-| C. Free engine provisioning | Official Epic GHCR image pulled on hosted Ubuntu (credentialed) or installed on separate authorized runner | **Blocked: registry denied (runs #5–6); Epic organization entitlement / token scope needs verification** |
+| C. Free engine provisioning | Official Epic GHCR image pulled on hosted Ubuntu (credentialed) or installed on separate authorized runner | **Passed** — licensed official dev-slim 5.8 image downloaded and Unreal tools verified in run #4 |
 | D. Automated APK | A successful UE BuildCookRun job and downloadable APK artifact | **Not established** |
 | E. Android compatibility | Install and launch on the Moto G Play 2026 | **Not established** |
 | F. Hover-racer suitability | Drivable craft, track, FPS measurements vs Godot | **Not established** |
@@ -37,3 +37,11 @@ No Epic engine downloaded or APK produced. Most likely next checks: confirm Epic
 ## Update — authenticated engine download completed successfully
 
 [GitHub Actions run 42321825428](https://github.com/tpylman90-ctrl/SceneForge-UE5-Lab/actions/runs/42321825428) completed successfully: official Epic UE 5.8 `dev-slim` container digest `sha256:daac02628ea880513e18ccd1364b1cac949d40609b24c040d73872d8214a0c46` was retrieved, and `RunUAT.sh` and UE build version 5.8 were verified. Unpacked image 57,423,881,405 bytes (57.4 decimal GB). GitHub Ubuntu runner had **32 GiB free after extraction**, measured via `df -h`. No APK was created in that run. An Android SDK + packaging attempt is the next gate; 4-core hosted runner may still run out of RAM, time, or disk.
+
+## Run #7 — Root cause: Android platform missing or unregistered
+
+[Run 42325569107](https://github.com/tpylman90-ctrl/SceneForge-UE5-Lab/actions/runs/42325569107) installed the pinned SDK/NDK and Java 21, then completed a 1,004-second UE5.8 cook with **zero cooking errors**. AutomationTool then failed at staging: `GetBuildPlatform: No BuildPlatform found for Android`.
+
+The official Epic development image is documented for building Linux projects; installed engine builds can separately include or exclude Android support (UE BuildGraph option `-set:WithAndroid=true`). Do **not** assume that adding Android SDK to a Linux-only installed engine makes its Android packaging platform available.
+
+A new **inspection-first** workflow records whether the official image has `Android.Automation.dll` and runtime directories. Ordinary push builds now inspect rather than blindly spending ~17 minutes cooking again. Explicit `workflow_dispatch` with `stage=android` requires a successful platform check before launching a cook. If missing, a different legitimately provisioned Unreal installed build with Android target support is required.
