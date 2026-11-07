@@ -33,3 +33,7 @@ Any unsuccessful branch remains an experiment; do not merge or migrate the Godot
 - [Run 42321489184](https://github.com/tpylman90-ctrl/SceneForge-UE5-Lab/actions/runs/42321489184): repeat using the plain official `dev-slim-5.8.0` tag; login succeeded; manifest still returned `denied`.
 
 No Epic engine downloaded or APK produced. Most likely next checks: confirm Epic Games GitHub organization invitation was **accepted**, the token belongs to that linked GitHub account, and it has `read:packages`. Successful Docker registry login alone does not prove Epic package authorization.
+
+## Update — authenticated engine download completed successfully
+
+[GitHub Actions run 42321825428](https://github.com/tpylman90-ctrl/SceneForge-UE5-Lab/actions/runs/42321825428) completed successfully: official Epic UE 5.8 `dev-slim` container digest `sha256:daac02628ea880513e18ccd1364b1cac949d40609b24c040d73872d8214a0c46` was retrieved, and `RunUAT.sh` and UE build version 5.8 were verified. Unpacked image 57,423,881,405 bytes (57.4 decimal GB). GitHub Ubuntu runner had **32 GiB free after extraction**, measured via `df -h`. No APK was created in that run. An Android SDK + packaging attempt is the next gate; 4-core hosted runner may still run out of RAM, time, or disk.
