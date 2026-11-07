@@ -34,7 +34,8 @@ class LabContractTests(unittest.TestCase):
 
     def test_epic_source_probe_does_not_fetch_or_publish_engine(self):
         workflow = (ROOT / ".github/workflows/epic-source-access.yml").read_text()
-        self.assertIn("curl --silent --show-error --output /dev/null", workflow)
+        self.assertIn("curl --silent --show-error --retry 1", workflow)
+        self.assertIn("--output /dev/null --write-out", workflow)
         self.assertIn("https://api.github.com/repos/EpicGames/UnrealEngine", workflow)
         self.assertIn("secrets.EPIC_SOURCE_CLASSIC_TOKEN", workflow)
         self.assertIn('if [ "$fine_code" = 200 ]; then', workflow)
