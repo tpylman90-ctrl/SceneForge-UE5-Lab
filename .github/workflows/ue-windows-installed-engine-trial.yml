@@ -126,7 +126,9 @@ jobs:
             }
             Write-Output 'Running bounded Unreal Setup.bat for Windows + Android. Other platforms excluded.'
             # Preserve Android support. Avoid downloading other host/console platforms.
-            $excludes = '-exclude=Mac -exclude=MacOS -exclude=IOS -exclude=TVOS -exclude=Linux -exclude=LinuxArm64 -exclude=Win32'
+            # Keep iOS/tvOS Setup dependencies even when their engine targets are disabled.
+            # AutomationTool still compiles platform helpers that reference those resources.
+            $excludes = '-exclude=Mac -exclude=MacOS -exclude=Linux -exclude=LinuxArm64 -exclude=Win32'
             $command = "Setup.bat --force $excludes"
             $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/s', '/c', $command -WorkingDirectory $folder -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden
             $stopped = 'no'
@@ -172,6 +174,10 @@ jobs:
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ($summary -join [Environment]::NewLine)
             $summary | ForEach-Object { Write-Output $_ }
             if ($rc -ne 0) { throw 'Dependency setup incomplete; compile not attempted.' }
+            $iosResource = Join-Path $folder 'Engine/Source/Programs/AutomationTool/IOS/Resources/GreenCheck.png'
+            $hasIosResource = Test-Path -LiteralPath $iosResource
+            Write-Output "AutomationTool iOS shared resource present: $hasIosResource"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- AutomationTool iOS shared resource present: $hasIosResource"
             if ((FreeGiB) -lt 45) { throw 'Insufficient post-Setup disk headroom for compilation.' }
             Write-Output 'Dependencies completed. Starting Android-enabled Unreal installed-engine BuildGraph.'
             Write-Output 'Installed .NET SDK major versions:'
@@ -255,12 +261,12 @@ jobs:
               }
               # Report narrowly scoped MSBuild failure evidence without exposing Epic paths or source.
               $msbuildSignals = [ordered]@{
-                'MSB3245 unresolved assembly reference' = '(?i)\\bMSB3245\\b'
-                'MSB3243 conflicting assembly references' = '(?i)\\bMSB3243\\b'
-                'MSB3554 resource generation failure' = '(?i)\\bMSB3554\\b'
-                'MSB4019 imported project not found' = '(?i)\\bMSB4019\\b'
-                'MSB4236 SDK resolver failure' = '(?i)\\bMSB4236\\b'
-                'MSB3073 command execution failure' = '(?i)\\bMSB3073\\b'
+                'MSB3245 unresolved assembly reference' = '(?i)\bMSB3245\b'
+                'MSB3243 conflicting assembly references' = '(?i)\bMSB3243\b'
+                'MSB3554 resource generation failure' = '(?i)\bMSB3554\b'
+                'MSB4019 imported project not found' = '(?i)\bMSB4019\b'
+                'MSB4236 SDK resolver failure' = '(?i)\bMSB4236\b'
+                'MSB3073 command execution failure' = '(?i)\bMSB3073\b'
               }
               foreach ($signal in $msbuildSignals.Keys) {
                 $signalCount = ([regex]::Matches($privateLog, $msbuildSignals[$signal])).Count
@@ -269,7 +275,10 @@ jobs:
                   Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Sanitized MSBuild signal: $signal (occurrences: $signalCount)"
                 }
               }
-              $failurePhase = if ($privateLog -match '(?i)\\bMSB3554\\b') { 'MSBuild resource generation' } elseif ($privateLog -match '(?i)\\bMSB3245\\b') { 'MSBuild assembly resolution' } else { 'BuildGraph or AutomationTool (unspecified)' }
+              $failurePhase = if ($privateLog -match '(?i)\bMSB3554\b') { 'MSBuild resource generation' } elseif ($privateLog -match '(?i)\bMSB3245\b') { 'MSBuild assembly resolution' } else { 'BuildGraph or AutomationTool (unspecified)' }
+              $iosMissingEvidence = [regex]::IsMatch($privateLog, '(?i)(GreenCheck\.png|IOS\.Automation\.Properties\.Resources\.resources|IOS[\\/]Resources)')
+              Write-Output "AutomationTool iOS resource referenced in failure log: $iosMissingEvidence"
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- AutomationTool iOS resource referenced in failure log: $iosMissingEvidence"
               Write-Output "Sanitized probable failure phase: $failurePhase"
               Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Probable failure phase: $failurePhase"
               $errorLines = ([regex]::Matches($privateLog, 'ERROR:|error CS[0-9]{4}|error MSB[0-9]{4}|Exception:', 'IgnoreCase')).Count
