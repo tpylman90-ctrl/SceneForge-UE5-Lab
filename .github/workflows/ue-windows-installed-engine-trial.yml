@@ -253,6 +253,25 @@ jobs:
                   Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Targeted diagnostic: $key"
                 }
               }
+              # Report narrowly scoped MSBuild failure evidence without exposing Epic paths or source.
+              $msbuildSignals = [ordered]@{
+                'MSB3245 unresolved assembly reference' = '(?i)\\bMSB3245\\b'
+                'MSB3243 conflicting assembly references' = '(?i)\\bMSB3243\\b'
+                'MSB3554 resource generation failure' = '(?i)\\bMSB3554\\b'
+                'MSB4019 imported project not found' = '(?i)\\bMSB4019\\b'
+                'MSB4236 SDK resolver failure' = '(?i)\\bMSB4236\\b'
+                'MSB3073 command execution failure' = '(?i)\\bMSB3073\\b'
+              }
+              foreach ($signal in $msbuildSignals.Keys) {
+                $signalCount = ([regex]::Matches($privateLog, $msbuildSignals[$signal])).Count
+                if ($signalCount -gt 0) {
+                  Write-Output "Sanitized MSBuild signal: $signal (occurrences: $signalCount)."
+                  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Sanitized MSBuild signal: $signal (occurrences: $signalCount)"
+                }
+              }
+              $failurePhase = if ($privateLog -match '(?i)\\bMSB3554\\b') { 'MSBuild resource generation' } elseif ($privateLog -match '(?i)\\bMSB3245\\b') { 'MSBuild assembly resolution' } else { 'BuildGraph or AutomationTool (unspecified)' }
+              Write-Output "Sanitized probable failure phase: $failurePhase"
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Probable failure phase: $failurePhase"
               $errorLines = ([regex]::Matches($privateLog, 'ERROR:|error CS[0-9]{4}|error MSB[0-9]{4}|Exception:', 'IgnoreCase')).Count
               Write-Output "BuildGraph error-marker line count: $errorLines."
               Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- BuildGraph error-marker line count: $errorLines"
