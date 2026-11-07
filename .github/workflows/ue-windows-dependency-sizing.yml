@@ -1,0 +1,127 @@
+name: UE5.8 Windows Android dependency footprint
+
+# Authorized UE source and downloaded dependencies live only on temporary runner.
+# No private Epic engine artifacts, code, cache, or credential logs are uploaded.
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/ue-windows-dependency-sizing.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-deps:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Measure private UE5.8 source plus Windows/Android dependencies
+        shell: pwsh
+        env:
+          EPIC_SOURCE_TOKEN: ${{ secrets.EPIC_SOURCE_TOKEN }}
+          EPIC_SOURCE_CLASSIC_TOKEN: ${{ secrets.EPIC_SOURCE_CLASSIC_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $api = 'https://api.github.com/repos/EpicGames/UnrealEngine'
+          function Test-SourceAccess([string]$token) {
+            if ([string]::IsNullOrEmpty($token)) { return $false }
+            try {
+              $r = Invoke-WebRequest -Uri $api -Headers @{
+                Authorization = "Bearer $token"
+                Accept = 'application/vnd.github+json'
+                'X-GitHub-Api-Version' = '2022-11-28'
+              } -Method Get -TimeoutSec 25 -UseBasicParsing
+              return $r.StatusCode -eq 200
+            }
+            catch { return $false }
+          }
+          $tokenType = ''
+          if (Test-SourceAccess $env:EPIC_SOURCE_TOKEN) {
+            $env:UE_GIT_SOURCE_TOKEN = $env:EPIC_SOURCE_TOKEN
+            $tokenType = 'fine-grained'
+          }
+          elseif (Test-SourceAccess $env:EPIC_SOURCE_CLASSIC_TOKEN) {
+            $env:UE_GIT_SOURCE_TOKEN = $env:EPIC_SOURCE_CLASSIC_TOKEN
+            $tokenType = 'temporary-classic'
+          }
+          else { throw 'No token authorized for Epic private Unreal source.' }
+          $root = (Get-PSDrive C).Root
+          function FreeGiB() { [math]::Round((Get-PSDrive C).Free / 1GB, 2) }
+          $before = FreeGiB
+          if ($before -lt 105) { throw "Insufficient disk headroom for safe Windows dependency test: $before GiB." }
+          $folder = Join-Path $env:RUNNER_TEMP 'ue58-windows-dependencies'
+          $askpass = Join-Path $env:RUNNER_TEMP 'ue58-askpass.cmd'
+          $out = Join-Path $env:RUNNER_TEMP 'ue58-setup-private-stdout.log'
+          $err = Join-Path $env:RUNNER_TEMP 'ue58-setup-private-stderr.log'
+          @'
+          @echo off
+          echo %UE_GIT_SOURCE_TOKEN%
+          '@ | Set-Content -Path $askpass -Encoding ascii
+          $env:GIT_ASKPASS = $askpass
+          $env:GIT_TERMINAL_PROMPT = '0'
+          $env:GCM_INTERACTIVE = 'Never'
+          $start = Get-Date
+          try {
+            Write-Output 'Checking out licensed UE 5.8 source; private Git output suppressed.'
+            & git -c credential.helper= clone --quiet --depth 1 --filter=blob:none --single-branch --branch 5.8 https://github.com/EpicGames/UnrealEngine.git $folder 2>$null
+            if ($LASTEXITCODE -ne 0) { throw "Private git clone failed with status $LASTEXITCODE." }
+            Remove-Item $askpass -Force -ErrorAction SilentlyContinue
+            Remove-Item Env:UE_GIT_SOURCE_TOKEN -ErrorAction SilentlyContinue
+            if (-not (Test-Path (Join-Path $folder 'Setup.bat'))) { throw 'Unreal Setup.bat missing after authorized checkout.' }
+            $checkoutFree = FreeGiB
+            if ($checkoutFree -lt 90) { throw "Insufficient free space after clone: $checkoutFree GiB." }
+            Write-Output 'Running bounded Unreal Setup.bat for Windows + Android. Other platforms excluded.'
+            # Preserve Android support. Avoid downloading other host/console platforms.
+            $excludes = '-exclude=Mac -exclude=MacOS -exclude=IOS -exclude=TVOS -exclude=Linux -exclude=LinuxArm64 -exclude=Win32'
+            $command = "Setup.bat $excludes"
+            $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/s', '/c', $command -WorkingDirectory $folder -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden
+            $stopped = 'no'
+            $stopReason = ''
+            $deadline = (Get-Date).AddMinutes(25)
+            while (-not $p.HasExited) {
+              Start-Sleep -Seconds 15
+              $p.Refresh()
+              if ((FreeGiB) -lt 35) {
+                $stopped = 'yes'
+                $stopReason = 'disk-below-35-GiB'
+                break
+              }
+              if ((Get-Date) -gt $deadline) {
+                $stopped = 'yes'
+                $stopReason = 'dependency-time-budget'
+                break
+              }
+            }
+            if ($stopped -eq 'yes' -and -not $p.HasExited) {
+              & taskkill.exe /F /T /PID $p.Id 2>$null | Out-Null
+              $p.WaitForExit(20000) | Out-Null
+            }
+            $p.Refresh()
+            $rc = if ($stopped -eq 'yes') { 99 } else { $p.ExitCode }
+            $after = FreeGiB
+            $measured = [math]::Round($before - $after, 2)
+            $summary = @(
+              '### UE 5.8 Windows+Android source dependency footprint',
+              "- Source credential: $tokenType",
+              "- Starting free disk (GiB): $before",
+              "- Free disk after source checkout (GiB): $checkoutFree",
+              "- Free disk after Setup (GiB): $after",
+              "- Disk consumed total (GiB): $measured",
+              "- Setup exit code: $rc",
+              "- Safety cutoff reached: $stopped",
+              "- Cutoff reason: $stopReason",
+              '- Android dependency exclusions: NONE',
+              '- Engine compilation: NOT attempted',
+              '- APK generated: NO',
+              '- Epic private source or dependency files uploaded: NO'
+            )
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ($summary -join [Environment]::NewLine)
+            $summary | ForEach-Object { Write-Output $_ }
+            if ($rc -ne 0) { throw 'Epic Setup.bat did not complete successfully; only aggregate disk measurements are exposed.' }
+          }
+          finally {
+            Remove-Item Env:UE_GIT_SOURCE_TOKEN -ErrorAction SilentlyContinue
+            Remove-Item $askpass,$out,$err -ErrorAction SilentlyContinue
+            if (Test-Path $folder) { Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue }
+          }
