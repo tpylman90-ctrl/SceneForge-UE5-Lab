@@ -31,6 +31,7 @@ jobs:
     env:
       UE_IMAGE: ghcr.io/epicgames/unreal-engine:dev-slim-5.8.0@sha256:daac02628ea880513e18ccd1364b1cac949d40609b24c040d73872d8214a0c46
       GHCR_USER: ${{ github.repository_owner }}
+      UE_IMAGE_TAG: ghcr.io/epicgames/unreal-engine:dev-slim-5.8.0
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,7 +58,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker manifest inspect "$UE_IMAGE" >/dev/null
+          # The Docker manifest CLI is more reliable with the plain tag than tag@digest.
+          # Keep the immutable digest for the later pull/build stages.
+          if ! docker manifest inspect "$UE_IMAGE_TAG" >/dev/null; then
+            echo "::error::Epic image access denied. Confirm the EpicGames GitHub invitation was accepted and the token belongs to the Epic-linked account."
+            exit 3
+          fi
           echo "Official pinned image manifest was accessible." >> "$GITHUB_STEP_SUMMARY"
           df -h / | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pull official UE installed-build container
