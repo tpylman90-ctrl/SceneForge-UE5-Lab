@@ -1,0 +1,31 @@
+# Unreal generated artifacts (do not commit these)
+/Binaries/
+/Build/
+/DerivedDataCache/
+/Intermediate/
+/Saved/
+/.vs/
+/.idea/
+/.vscode/
+/dist/
+/reports/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.xcodeproj
+*.xcworkspace
+*.apk
+*.aab
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+# Local tooling and credentials
+.env
+.env.*
+!*.env.example
+__pycache__/
+*.pyc

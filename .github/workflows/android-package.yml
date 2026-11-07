@@ -1,0 +1,81 @@
+name: Unreal Android APK (provisioned runner only)
+
+# Intentionally manual: no preinstalled Epic engine on standard hosted runners.
+# Do NOT attach an untrusted public PR to a self-hosted machine.
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: 'Provisioned runner OS (requires UE 5.8 + SDK/NDK/JDK)'
+        required: true
+        type: choice
+        default: linux
+        options:
+          - linux
+          - windows
+
+permissions:
+  contents: read
+
+jobs:
+  android-linux:
+    if: ${{ inputs.host == 'linux' }}
+    runs-on: [self-hosted, Linux, ue5-android]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate project shell
+        run: python3 -m unittest discover -s scripts/ci/tests -v
+      - name: Record installed tooling
+        run: python3 scripts/ci/runner_probe.py --report-dir reports
+      - name: Build development Android APK (ASTC)
+        env:
+          UE_ROOT: ${{ vars.UE_ROOT }}
+        run: python3 scripts/ci/package_android.py
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ue5lab-android-linux-${{ github.run_number }}
+          path: dist/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ue5lab-report-linux-${{ github.run_number }}
+          path: reports/
+          if-no-files-found: ignore
+
+  android-windows:
+    if: ${{ inputs.host == 'windows' }}
+    runs-on: [self-hosted, Windows, ue5-android]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate project shell
+        run: python -m unittest discover -s scripts/ci/tests -v
+      - name: Record installed tooling
+        run: python scripts/ci/runner_probe.py --report-dir reports
+      - name: Build development Android APK (ASTC)
+        env:
+          UE_ROOT: ${{ vars.UE_ROOT }}
+        run: python scripts/ci/package_android.py
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ue5lab-android-windows-${{ github.run_number }}
+          path: dist/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ue5lab-report-windows-${{ github.run_number }}
+          path: reports/
+          if-no-files-found: ignore

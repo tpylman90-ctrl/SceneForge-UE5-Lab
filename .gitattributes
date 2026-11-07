@@ -1,0 +1,8 @@
+* text=auto
+*.uasset binary
+*.umap binary
+*.glb binary
+*.gltf text
+*.png binary
+*.jpg binary
+*.blend binary
