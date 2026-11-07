@@ -35,8 +35,18 @@ The [official development container overview](https://dev.epicgames.com/document
 
 [Source access probe](https://github.com/tpylman90-ctrl/SceneForge-UE5-Lab/actions/runs/42329959235) completed successfully as an HTTP-status diagnostic, but access to `EpicGames/UnrealEngine` returned **404** using our existing `EPIC_GHCR_TOKEN`. This token's successful package-registry access does **not** imply private-repository access.
 
-The probe now prefers a **separate** secret named `EPIC_SOURCE_TOKEN` when available and falls back to `EPIC_GHCR_TOKEN` for diagnostics. Source access remains the next authorization gate.
+The probe uses a **separate** fine-grained secret named `EPIC_SOURCE_TOKEN`, with an optional temporary classic PAT secret `EPIC_SOURCE_CLASSIC_TOKEN`. It never falls back to the package-registry token. The workflow checks the fine-grained token first; if that token is pending approval, it tests the classic token. It reports which one worked but never prints token values or repository contents.
 
 To enable further work, verify that your signed-in GitHub account can visit `https://github.com/EpicGames/UnrealEngine`. If it can, create a GitHub personal access token that can **read that repository's contents**, ideally scoped specifically to that repository if GitHub/Epic permits. Some configurations may require a classic PAT's broad `repo` scope, which can access other private repos: understand that risk and use a short expiry. Store the token **only** as the Actions repository secret `EPIC_SOURCE_TOKEN`; never paste it into an issue, log, chat, or project code. The source-access check does not clone, download, or publish Epic code. No token alone guarantees compilation within free runner limits.
 
 Do **not** replace the existing working `EPIC_GHCR_TOKEN`: it continues to authorize Epic's container downloads.
+
+## Temporary classic PAT trial while fine-grained Epic access is pending
+
+Create a **classic** personal access token in GitHub's [Tokens (classic)](https://github.com/settings/tokens/new) page with a 7-day expiration and the `repo` scope, the only classic scope covering private repository reads. This scope is **broad**, potentially reading and writing every accessible private repository; GitHub does not offer a read-only classic `repo` scope. Use only a short-lived token; do not add additional scopes. Epic may independently prohibit classic PAT access. The token may need SSO authorization if the organization requires it.
+
+Save the token as `EPIC_SOURCE_CLASSIC_TOKEN` in the **SceneForge-UE5-Lab** GitHub Actions secrets. Keep the fine-grained `EPIC_SOURCE_TOKEN` pending and stored separately; keep the working `EPIC_GHCR_TOKEN` unchanged. Re-run `epic-source-access.yml` manually or push a trusted change to the workflow file.
+
+The GitHub workflow always tests the fine-grained token *first* and uses the temporary classic token only while the fine-grained token cannot access the source. Once the fine-grained token returns HTTP 200, **revoke the classic token and delete the `EPIC_SOURCE_CLASSIC_TOKEN` repo secret**. Never paste tokens in chat, issues, screenshots or repository files.
+
+An HTTP 200 confirms *source access only*. GitHub runner feasibility and Android-enabled UE engine compilation are separate, unverified gates.
