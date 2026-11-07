@@ -1,0 +1,98 @@
+name: UE 5.8 Android source preflight
+
+# Inspect a private Epic source branch and BuildGraph options in memory only.
+# Never print/upload Epic source, token values, or engine binary content.
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/ue-source-preflight.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Examine authorized UE 5.8 source metadata and runner capacity
+        shell: bash
+        env:
+          EPIC_SOURCE_TOKEN: ${{ secrets.EPIC_SOURCE_TOKEN }}
+          EPIC_SOURCE_CLASSIC_TOKEN: ${{ secrets.EPIC_SOURCE_CLASSIC_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import pathlib
+          import shutil
+          import urllib.request
+          import urllib.error
+
+          root="https://api.github.com/repos/EpicGames/UnrealEngine"
+          def get(path, token):
+              req=urllib.request.Request(root+path,headers={
+                  "Authorization": "Bearer "+token,
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "SceneForge-UE5-Authorized-Preflight",
+              })
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as r:
+                      return int(r.status), json.load(r)
+              except urllib.error.HTTPError as e:
+                  return e.code, None
+
+          token=None
+          origin=None
+          for name, secret in [
+              ("fine-grained","EPIC_SOURCE_TOKEN"),
+              ("temporary-classic","EPIC_SOURCE_CLASSIC_TOKEN"),
+          ]:
+              t=os.environ.get(secret,"")
+              if not t:
+                  continue
+              status,_=get("",t)
+              if status==200:
+                  token,origin=t,name
+                  break
+          if token is None:
+              raise SystemExit("::error::Neither source token has authorized Epic source access.")
+
+          branch_status,branch=get("/branches/5.8",token)
+          if branch_status!=200:
+              raise SystemExit(f"::error::Private Unreal 5.8 source branch unavailable (HTTP {branch_status}).")
+          path="/contents/Engine/Build/InstalledEngineBuild.xml?ref=5.8"
+          file_status,metadata=get(path,token)
+          if file_status!=200 or not metadata or metadata.get("encoding")!="base64":
+              raise SystemExit(f"::error::UE 5.8 BuildGraph source metadata unavailable (HTTP {file_status}).")
+
+          # The graph is checked only in runner memory. Do not print or save it.
+          graph=base64.b64decode(metadata["content"]).decode("utf-8",errors="replace")
+          android="WithAndroid" in graph
+          linux="Make Installed Build Linux" in graph
+          disk=shutil.disk_usage("/")
+          mem=pathlib.Path("/proc/meminfo").read_text().splitlines()[0]
+          mem_gib=round(int(mem.split()[1])/1024/1024,1)
+          free_gib=round(disk.free/2**30,1)
+          cpus=os.cpu_count()
+          lines=[
+              "### Authorized Unreal Engine 5.8 Android source-build feasibility",
+              f"- Source credential: {origin}",
+              "- UE 5.8 branch: accessible",
+              "- UE installed-build graph: accessible (content not disclosed)",
+              f"- BuildGraph WithAndroid option: {android}",
+              f"- Linux Installed Build target mentioned: {linux}",
+              f"- GitHub runner: {cpus} CPUs, {mem_gib} GiB RAM, {free_gib} GiB free disk",
+              "- Engine source checkout: NOT attempted",
+              "- Full Android engine compilation: NOT attempted",
+              "- Android APK: NOT produced",
+          ]
+          pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(lines)+"\n")
+          print("\n".join(lines))
+          if not android or not linux:
+              raise SystemExit("::error::Required Android/Linux BuildGraph options not confirmed.")
+          PY
