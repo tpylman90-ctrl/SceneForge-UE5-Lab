@@ -1,5 +1,6 @@
 name: Official Epic container feasibility
 
+# Membership accepted in EpicGames; recheck GHCR access after organization processing.
 # Official Epic development image is license/credential gated. NEVER log tokens
 # or upload the proprietary engine as an artifact.
 on:
