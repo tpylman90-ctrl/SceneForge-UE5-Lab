@@ -1,0 +1,78 @@
+name: SceneForge UE5 staged BuildGraph
+
+# Manual only. Trusted self-hosted runner with locally licensed Epic checkout.
+# No public engine artifacts, source caches or raw engine build logs.
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        type: choice
+        required: true
+        default: list
+        options: [list, export, node, resume]
+        description: 'BuildGraph stage to execute'
+      node_name:
+        type: string
+        required: false
+        description: 'Exact node name for stage=node'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-ue58-buildgraph-products
+  cancel-in-progress: false
+
+jobs:
+  staged:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: [self-hosted, Windows, X64, ue5-android]
+    timeout-minutes: 340
+    env:
+      UE_ROOT: ${{ vars.SCENEFORGE_UE58_ROOT }}
+      UE_PRIVATE: ${{ vars.SCENEFORGE_UE58_PRIVATE_STORAGE }}
+      STAGE: ${{ inputs.stage }}
+      NODE_NAME: ${{ inputs.node_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Confirm private engine checkout and private product storage
+        shell: pwsh
+        run: |
+          if (!$env:UE_ROOT -or !$env:UE_PRIVATE) { throw 'Set SCENEFORGE_UE58_ROOT and SCENEFORGE_UE58_PRIVATE_STORAGE Actions variables.' }
+          if (!(Test-Path (Join-Path $env:UE_ROOT 'Engine/Build/InstalledEngineBuild.xml'))) { throw 'No Unreal source checkout on the self-hosted machine.' }
+          if (!(Test-Path -LiteralPath $env:UE_PRIVATE)) { throw 'No private persistent product storage on the self-hosted machine.' }
+          if ($env:STAGE -eq 'node' -and !$env:NODE_NAME) { throw 'Supply node_name to build one exported graph node.' }
+          Write-Output 'Preprovisioned licensed engine and private storage verified.'
+      - name: List graph using pinned MIT community action
+        if: ${{ inputs.stage == 'list' }}
+        uses: heucuva/unreal-buildgraph-action@cb990a03268dc20817c2b5b396a4f553eebd6228
+        with:
+          engine-path: ${{ vars.SCENEFORGE_UE58_ROOT }}
+          working-directory: ${{ vars.SCENEFORGE_UE58_ROOT }}
+          script: ${{ vars.SCENEFORGE_UE58_ROOT }}/Engine/Build/InstalledEngineBuild.xml
+          target: Make Installed Build Win64
+          list-only: true
+          set: |
+            WithWin64=true
+            WithWin32=false
+            WithAndroid=true
+            WithDDC=false
+            WithLinux=false
+            WithLinuxArm64=false
+            WithMac=false
+            WithIOS=false
+            WithTVOS=false
+            WithFullDebugInfo=false
+            WithClient=false
+            WithServer=false
+            GameConfigurations=Development
+          additional-arguments: |
+            -NoP4
+            -unattended
+      - name: Run export, one node or resume with private logs
+        if: ${{ inputs.stage != 'list' }}
+        shell: pwsh
+        run: |
+          ./scripts/ci/staged_buildgraph.ps1 -Mode $env:STAGE -EngineRoot $env:UE_ROOT -SharedRoot $env:UE_PRIVATE -NodeName $env:NODE_NAME
