@@ -18,7 +18,7 @@ concurrency:
 jobs:
   windows-deps:
     runs-on: windows-2025
-    timeout-minutes: 350
+    timeout-minutes: 355
     steps:
       - name: Set up Java 21 for Unreal Android
         uses: actions/setup-java@v4
@@ -194,12 +194,29 @@ jobs:
             New-Item -ItemType Directory -Force -Path (Split-Path $config) | Out-Null
             $xml = '<Configuration xmlns="https://www.unrealengine.com/BuildConfiguration"><BuildConfiguration><MaxParallelActions>2</MaxParallelActions></BuildConfiguration><ParallelExecutor><MemoryPerActionBytes>4294967296</MemoryPerActionBytes></ParallelExecutor></Configuration>'
             Set-Content -Path $config -Value $xml -Encoding utf8
+            # On NTFS, newly generated object files and installed-build copies inherit
+            # directory compression. This can buy disk headroom on small free runners.
+            # Compression is best-effort; never block if runner volume disallows it.
+            $compressionTargets = @(
+              (Join-Path $folder 'Engine/Intermediate'),
+              (Join-Path $folder 'LocalBuilds')
+            )
+            foreach ($target in $compressionTargets) {
+              New-Item -ItemType Directory -Force -Path $target | Out-Null
+              $compressionOutput = & compact.exe /C /I /Q "/S:$target" 2>$null
+              $compRc = $LASTEXITCODE
+              Write-Output "NTFS compression for generated files: $([System.IO.Path]::GetFileName($target)); exit: $compRc"
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- NTFS output compression $([System.IO.Path]::GetFileName($target)): exit $compRc"
+            }
+            Write-Output 'BuildGraph target: Win64 editor and Android, Development game configuration only.'
             $buildOut = Join-Path $env:RUNNER_TEMP 'ue58-build-private-stdout.log'
             $buildErr = Join-Path $env:RUNNER_TEMP 'ue58-build-private-stderr.log'
-            $args = 'BuildGraph -Script=Engine/Build/InstalledEngineBuild.xml -Target="Make Installed Build Win64" -set:WithWin64=true -set:WithAndroid=true -set:WithDDC=false -set:WithLinux=false -set:WithLinuxArm64=false -set:WithMac=false -set:WithIOS=false -set:WithTVOS=false -set:WithFullDebugInfo=false -set:WithClient=false -set:WithServer=false -NoP4 -unattended'
+            # Retain Android; build Development only instead of the default three game configurations.
+            # Epic documents GameConfigurations as a supported InstalledEngineBuild.xml setting.
+            $args = 'BuildGraph -Script=Engine/Build/InstalledEngineBuild.xml -Target="Make Installed Build Win64" -set:WithWin64=true -set:WithWin32=false -set:WithAndroid=true -set:WithDDC=false -set:WithLinux=false -set:WithLinuxArm64=false -set:WithMac=false -set:WithIOS=false -set:WithTVOS=false -set:WithFullDebugInfo=false -set:WithClient=false -set:WithServer=false -set:GameConfigurations=Development -NoP4 -unattended'
             $uat = Join-Path $folder 'Engine/Build/BatchFiles/RunUAT.bat'
             $build = Start-Process -FilePath $uat -ArgumentList $args -WorkingDirectory $folder -RedirectStandardOutput $buildOut -RedirectStandardError $buildErr -PassThru -WindowStyle Hidden
-            $buildDeadline = (Get-Date).AddMinutes(240)
+            $buildDeadline = (Get-Date).AddMinutes(315)
             $buildStop = 'none'
             while (-not $build.HasExited) {
               Start-Sleep -Seconds 20
